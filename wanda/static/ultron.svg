@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Ultron">
+  <!-- Original artwork: an angular chrome android head with red optics. Replace with your own
+       image by dropping ultron.png/.jpg/.webp/.svg in ~/.wanda/ on the Mac. -->
+  <defs>
+    <linearGradient id="chrome" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef2f6"/>
+      <stop offset=".35" stop-color="#9aa6b2"/>
+      <stop offset=".55" stop-color="#d7dde3"/>
+      <stop offset=".8" stop-color="#5d6772"/>
+      <stop offset="1" stop-color="#2b3138"/>
+    </linearGradient>
+    <linearGradient id="shade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity=".55"/>
+    </linearGradient>
+    <radialGradient id="eye" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#fff4f0"/>
+      <stop offset=".25" stop-color="#ff6a4d"/>
+      <stop offset=".7" stop-color="#e0141e"/>
+      <stop offset="1" stop-color="#e0141e" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <!-- head silhouette: high crown, swept temples, narrow angular jaw -->
+  <path d="M100 12 L136 22 L158 48 L164 86 L156 118 L146 150 L124 180 L100 190 L76 180 L54 150 L44 118 L36 86 L42 48 L64 22 Z"
+        fill="url(#chrome)" stroke="#1a1e23" stroke-width="2"/>
+  <!-- crown ridge and center seam -->
+  <path d="M100 12 L100 70" stroke="#48525c" stroke-width="2" opacity=".7"/>
+  <path d="M64 22 L82 60 L100 70 L118 60 L136 22" fill="none" stroke="#3a434c" stroke-width="2.2" opacity=".75"/>
+  <!-- temple plates -->
+  <path d="M42 48 L70 70 L60 104 L38 92 Z" fill="#7b8793" opacity=".55"/>
+  <path d="M158 48 L130 70 L140 104 L162 92 Z" fill="#7b8793" opacity=".55"/>
+  <!-- heavy brow -->
+  <path d="M50 86 L86 76 L100 84 L114 76 L150 86 L146 96 L114 90 L100 98 L86 90 L54 96 Z" fill="#2a3037"/>
+  <!-- eye sockets -->
+  <path d="M58 98 L88 92 L92 104 L64 110 Z" fill="#12151a"/>
+  <path d="M142 98 L112 92 L108 104 L136 110 Z" fill="#12151a"/>
+  <!-- eyes -->
+  <g filter="url(#glow)">
+    <ellipse cx="76" cy="101" rx="15" ry="5.5" fill="url(#eye)" transform="rotate(-10 76 101)"/>
+    <ellipse cx="124" cy="101" rx="15" ry="5.5" fill="url(#eye)" transform="rotate(10 124 101)"/>
+  </g>
+  <!-- cheek blades -->
+  <path d="M52 118 L80 124 L72 150 L58 142 Z" fill="#aeb8c2" opacity=".6"/>
+  <path d="M148 118 L120 124 L128 150 L142 142 Z" fill="#aeb8c2" opacity=".6"/>
+  <!-- nose ridge -->
+  <path d="M100 98 L94 128 L100 134 L106 128 Z" fill="#7c8895"/>
+  <!-- mouth: segmented grille with a red core -->
+  <path d="M74 146 L100 140 L126 146 L120 160 L100 164 L80 160 Z" fill="#101318"/>
+  <g filter="url(#glow)" stroke="#ff3b2f" stroke-width="2" stroke-linecap="round" opacity=".9">
+    <path d="M82 151 L118 151"/>
+    <path d="M86 156 L114 156" opacity=".7"/>
+  </g>
+  <g stroke="#2b3138" stroke-width="1.6">
+    <path d="M88 145 L88 161"/><path d="M96 142 L96 163"/><path d="M104 142 L104 163"/><path d="M112 145 L112 161"/>
+  </g>
+  <!-- jaw shading -->
+  <path d="M54 150 L76 180 L100 190 L124 180 L146 150 L100 170 Z" fill="url(#shade)"/>
+</svg>

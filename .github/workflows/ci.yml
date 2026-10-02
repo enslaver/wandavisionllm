@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is macOS's /usr/bin/python3, which runs deploy.py and the hooks' syntax floor.
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install --upgrade pip pytest pyyaml
+      - name: Compile deployed Python
+        run: python -m py_compile deploy.py wanda/server.py litellm/*.py scripts/check_repo.py
+      - name: Unit tests
+        run: python -m pytest litellm -q -p no:cacheprovider
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: ruff check --output-format=github .
+      - name: Shell syntax
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null
+          for f in litellm/start.sh wanda/install.sh; do bash -n "$f"; done
+          for f in mtplx/bin/*.sh bin/*.sh; do zsh -n "$f"; done
+
+  configs:
+    name: Configs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pyyaml
+      - name: Repo checks (render, YAML, plists, stdlib-only, no hard-coded home paths)
+        run: python scripts/check_repo.py
+      - name: Render with a sample hostname
+        run: WANDAVISION_HOSTNAME=my-mac.example.ts.net python deploy.py render rendered
+      - name: Caddyfile adapts
+        run: docker run --rm -v "$PWD/rendered:/w:ro" caddy:2 caddy adapt --config /w/caddy/Caddyfile --adapter caddyfile > /dev/null

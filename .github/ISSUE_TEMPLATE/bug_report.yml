@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in the stack, a hook, deploy.py or the Wanda panel misbehaves
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ./deploy.py push litellm
+        2. claude --model opus ...
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Part of the stack
+      options: [Wanda panel, loop_breaker, ultron_admit, ultron_media, ultron_stats, deploy.py, tier scripts / llama-swap, Caddy / launchd, docs]
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Mac model and memory, macOS version, and the versions of LiteLLM, llama-swap, mtplx / TensorFold.
+      placeholder: Mac Studio M5 Max 64 GB, macOS 27.0, LiteLLM 1.102.1, llama-swap v260, mtplx 2.12.0
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: From Wanda's log tabs or ~/.litellm/*.jsonl. Remove keys and hostnames you don't want public.
+      render: text

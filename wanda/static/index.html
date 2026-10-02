@@ -1,0 +1,1169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d0f">
+<title>__WANDA_NAME__ Panel</title>
+<style>
+:root{
+  --ink:#0b0d0f; --panel:#131619; --panel-2:#191d21; --edge:#242a30; --edge-2:#2f373f;
+  --text:#c9d1d9; --dim:#7d8790; --dimmer:#565f68;
+  --green:#27d07c; --amber:#f0a92b; --red:#ff4d4d; --gray:#4a545c;
+  --opus:#c39bd3; --sonnet:#88c0d0; --haiku:#a3be8c;
+  --legend:"Avenir Next Condensed","HelveticaNeue-CondensedBold",Bahnschrift,"Arial Narrow",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --prose:-apple-system,system-ui,"Segoe UI",sans-serif;
+  --bar-h:64px;              /* measured at runtime */
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--ink);color:var(--text);
+  font-family:var(--prose);font-size:15px;-webkit-text-size-adjust:100%}
+body{padding-bottom:calc(var(--bar-h) + env(safe-area-inset-bottom,0px) + 12px);overflow-x:hidden}
+.mt{min-width:0;overflow-wrap:anywhere;word-break:normal}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+a{color:inherit}
+
+header{position:sticky;top:0;z-index:20;background:linear-gradient(180deg,#0b0d0f,#0b0d0fe6);
+  border-bottom:1px solid var(--edge);padding:10px 14px;
+  padding-top:calc(10px + env(safe-area-inset-top,0px));display:flex;align-items:center;gap:10px}
+header .title{font-family:var(--legend);text-transform:uppercase;letter-spacing:.22em;font-size:17px;font-weight:700}
+header .tag{font-family:var(--legend);text-transform:uppercase;letter-spacing:.16em;font-size:11px;color:var(--dim);
+  border:1px solid var(--edge-2);border-radius:3px;padding:4px 7px}
+header .sub{font-family:var(--mono);font-size:11px;color:var(--dimmer);margin-left:auto;text-align:right;line-height:1.35}
+.overall{width:11px;height:11px;border-radius:50%;flex:0 0 auto;background:var(--gray)}
+.overall.green{background:var(--green);box-shadow:0 0 10px #27d07c66}
+.overall.amber{background:var(--amber);box-shadow:0 0 10px #f0a92b66}
+.overall.red{background:var(--red);box-shadow:0 0 12px #ff4d4d88;animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+section{margin:14px 12px}
+h2{font-family:var(--legend);text-transform:uppercase;letter-spacing:.16em;font-size:11px;
+  color:var(--dim);margin:0 0 8px 2px;font-weight:600;display:flex;gap:10px;align-items:baseline}
+h2 .aside{margin-left:auto;font-family:var(--mono);letter-spacing:0;text-transform:none;color:var(--dimmer);font-weight:400}
+
+/* ---- lamps ---- */
+#lamps{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px}
+.lamp{display:grid;grid-template-columns:14px 1fr;gap:10px;align-items:start;background:var(--panel);
+  border:1px solid var(--edge);border-left:2px solid var(--edge-2);border-radius:3px;padding:9px 11px;min-width:0}
+.bulb{width:11px;height:11px;border-radius:50%;background:var(--gray);margin-top:3px;border:1px solid #00000066;flex:0 0 auto}
+.green>.bulb,.bulb.green{background:var(--green);box-shadow:0 0 8px #27d07c55}
+.amber>.bulb,.bulb.amber{background:var(--amber);box-shadow:0 0 8px #f0a92b55}
+.red>.bulb,.bulb.red{background:var(--red);box-shadow:0 0 10px #ff4d4d77}
+.lamp.red{border-left-color:var(--red)} .lamp.amber{border-left-color:var(--amber)}
+.lamp .name{font-family:var(--legend);text-transform:uppercase;letter-spacing:.15em;font-size:12px;color:#e6edf3;font-weight:600}
+.lamp .detail{font-family:var(--mono);font-size:11.5px;line-height:1.5;color:var(--dim);margin-top:3px}
+@media (max-width:560px){
+  .lamp.green,.lamp.gray{grid-template-columns:14px auto minmax(0,1fr);align-items:baseline;column-gap:9px;padding:7px 11px}
+  .lamp.green>div,.lamp.gray>div{display:contents}
+  .lamp.green .detail,.lamp.gray .detail{margin-top:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px}
+  .lamp.green .bulb,.lamp.gray .bulb{margin-top:0;align-self:center}
+}
+
+/* ---- tier cards ---- */
+#tiers{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:8px;align-items:start}
+.tier{background:var(--panel);border:1px solid var(--edge);border-top:2px solid var(--tc);border-radius:3px;
+  padding:10px 12px 11px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.tier.off{border-top-color:var(--edge-2)}
+.tier .head{display:flex;align-items:center;gap:9px;min-width:0}
+.tier .tname{font-family:var(--legend);text-transform:uppercase;letter-spacing:.2em;font-size:15px;font-weight:700;color:var(--tc)}
+.tier.off .tname{color:var(--dim)}
+.pill{font-family:var(--legend);text-transform:uppercase;letter-spacing:.14em;font-size:10.5px;border-radius:3px;
+  padding:2px 7px;border:1px solid var(--edge-2);color:var(--dim)}
+.pill.GENERATING{background:var(--green);border-color:var(--green);color:#06140c}
+.pill.PREFILL{background:#1f3a2c;border-color:var(--green);color:var(--green)}
+.pill.IDLE{color:var(--text)}
+.pill.LOADING{border-color:var(--amber);color:var(--amber);animation:pulse 1.2s infinite}
+.pill.UNREACHABLE{border-color:var(--red);color:var(--red)}
+.tier .port{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dimmer)}
+.tier .model{font-family:var(--mono);font-size:11px;color:var(--dimmer);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.big{display:flex;align-items:baseline;gap:8px;min-width:0}
+.big .num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:34px;line-height:1;color:#e6edf3;font-weight:600}
+.big .unit{font-family:var(--mono);font-size:11px;color:var(--dim)}
+.big .what{margin-left:auto;font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:10.5px;color:var(--dimmer);text-align:right}
+.tier.GENERATING .big .num{color:var(--green)}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 10px}
+.stat{min-width:0}
+.stat .k{font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:9.5px;color:var(--dimmer)}
+.stat .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.meter{min-width:0}
+.meter .lbl{display:flex;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--dim);margin-bottom:3px}
+.meter .lbl span:last-child{margin-left:auto;color:var(--dimmer)}
+.meter .track{height:4px;background:#0e1114;border:1px solid var(--edge);border-radius:2px;overflow:hidden}
+.meter .fill{height:100%;background:var(--tc);opacity:.75;transition:width .8s linear}
+.meter.warn .fill{background:var(--amber)}
+.flight{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--green);border-left:2px solid var(--green);
+  padding:3px 8px;background:#0f1a14;min-width:0;overflow-wrap:anywhere}
+.flight .pv{color:var(--dim)}
+.tier .note{font-family:var(--mono);font-size:11px;color:var(--dimmer);line-height:1.5}
+.tier .acts{display:flex;gap:6px;margin-top:auto}
+.tier .acts button,.bar-btn{background:var(--panel-2);color:var(--dim);border:1px solid var(--edge-2);border-radius:3px;
+  padding:6px 10px;font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:10.5px;cursor:pointer}
+.tier .acts button.armed,.bar-btn.armed{border-color:var(--amber);color:#0b0d0f;background:var(--amber)}
+.tier .acts button[disabled]{opacity:.4;cursor:default}
+
+/* ---- trace ---- */
+#tracebox{background:var(--panel);border:1px solid var(--edge);border-radius:3px;padding:8px 6px 4px}
+#trace{display:block;width:100%;height:150px}
+.tracefoot{display:flex;gap:14px;justify-content:flex-end;padding:2px 6px 4px;font-family:var(--mono);font-size:10px;color:var(--dimmer)}
+.tracefoot i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+
+/* ---- feed ---- */
+#feed{background:#0e1114;border:1px solid var(--edge);border-radius:3px;max-height:46vh;overflow:auto;-webkit-overflow-scrolling:touch}
+.row{display:grid;grid-template-columns:62px 58px minmax(0,1fr);gap:8px;padding:4px 11px;border-left:2px solid transparent;
+  font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--dim)}
+.row .tm{color:var(--dimmer)} .row .who{font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:10.5px}
+.row .txt{min-width:0;overflow-wrap:anywhere}
+.row .txt b{color:var(--text);font-weight:500}
+.row.ev{color:var(--dimmer);font-style:italic}
+.row.ev.err{color:var(--red);border-left-color:var(--red);font-style:normal}
+.row.ev.flag{color:var(--amber);border-left-color:var(--amber);font-style:normal}
+.quiet{font-family:var(--mono);font-size:11.5px;color:var(--dimmer);line-height:1.6;padding:10px 11px}
+
+/* ---- services ---- */
+#services{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px}
+.svc{display:grid;grid-template-columns:28px minmax(0,1fr) 12px;gap:10px;align-items:center;background:var(--panel);
+  border:1px solid var(--edge);border-radius:3px;padding:9px 11px;text-decoration:none;min-width:0}
+.svc:hover{border-color:var(--edge-2);background:var(--panel-2)}
+.svc .ico{width:24px;height:24px;background:var(--text);-webkit-mask:var(--icon) center/contain no-repeat;mask:var(--icon) center/contain no-repeat}
+.svc .name{font-family:var(--legend);text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:#e6edf3;font-weight:600}
+.svc .desc{font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:2px}
+.svc.disabled{opacity:.5;border-style:dashed}
+.svc.disabled .name::after{content:" · disabled";color:var(--dimmer);letter-spacing:.1em}
+.svc.up .bulb{background:var(--green);box-shadow:0 0 8px #27d07c55}
+.svc.down .bulb{background:var(--red)}
+
+/* ---- logs ---- */
+#tabs{display:flex;gap:4px;overflow-x:auto;padding-bottom:6px}
+#tabs button{flex:0 0 auto;background:var(--panel);color:var(--dim);border:1px solid var(--edge);border-radius:3px;
+  padding:6px 10px;font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:11px;cursor:pointer}
+#tabs button.on{background:var(--panel-2);color:#e6edf3;border-color:var(--edge-2)}
+#logbox{background:#0e1114;border:1px solid var(--edge);border-radius:3px;max-height:46vh;overflow:auto}
+#logtext{margin:0;padding:10px 11px;font-family:var(--mono);font-size:11px;line-height:1.55;color:var(--dim);white-space:pre-wrap;overflow-wrap:anywhere;min-width:0}
+
+/* ---- traffic flow ---- */
+#flowbox{background:radial-gradient(ellipse at 50% 45%,#1a1214 0%,#111417 55%,#0e1114 100%);border:1px solid var(--edge);
+  border-radius:3px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+#flow{display:block;min-width:620px;width:100%}
+#flow text{font-family:var(--mono)}
+#flow .nlabel{font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:11.5px;fill:#e6edf3;font-weight:600}
+#flow .nsub{font-size:10px;fill:#7d8790}
+#flow .glabel{font-family:var(--legend);text-transform:uppercase;letter-spacing:.16em;font-size:9.5px;fill:#565f68}
+#flow .link{fill:none;stroke-linecap:round;opacity:.55;transition:opacity .4s}
+#flow .link.live{opacity:.95;stroke-dasharray:3 9;animation:flowdash 1.1s linear infinite}
+#flow .link.idle{opacity:.22}
+@keyframes flowdash{to{stroke-dashoffset:-24}}
+#flow .card{fill:#15191d;stroke:#2a3138;stroke-width:1}
+#flow .card.hot{stroke-width:1.6}
+#flow .ring{fill:none;stroke:#ff3b2f;stroke-width:2.5;opacity:.55}
+#flow .ring.pulse{animation:ringpulse 1.6s ease-in-out infinite}
+@keyframes ringpulse{50%{opacity:1;stroke-width:4}}
+#flow .badge{fill:#3a1414;stroke:#ff4d4d}
+#flow .badgetxt{font-size:9.5px;fill:#ffd9d9}
+.winsel button{background:transparent;border:1px solid var(--edge-2);color:var(--dimmer);border-radius:3px;padding:1px 7px;
+  font-family:var(--mono);font-size:10.5px;cursor:pointer;margin-left:3px}
+.winsel button.on{color:#e6edf3;border-color:#5a646e;background:var(--panel-2)}
+
+/* ---- routing ---- */
+#modes{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px;margin-bottom:8px}
+/* ---- LoRA: the trace switch beside the tiles, then runs + packs ---- */
+.lrow{display:grid;grid-template-columns:minmax(280px,340px) minmax(0,1fr);gap:8px;margin-bottom:8px;align-items:start}
+@media (max-width:760px){ .lrow{grid-template-columns:minmax(0,1fr)} }
+#lstats{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px}
+.ltab{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.llists{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:8px}
+@media (max-width:760px){ .llists{grid-template-columns:minmax(0,1fr)} }
+.ltab th{text-align:left;font-family:var(--legend);text-transform:uppercase;letter-spacing:.1em;
+  font-size:9.5px;color:var(--dimmer);font-weight:600;padding:4px 11px;border-bottom:1px solid var(--edge)}
+.ltab td{padding:4px 11px;border-bottom:1px solid #161b20;white-space:nowrap}
+.ltab td b{color:var(--text);font-weight:500} .ltab .good{color:var(--green)} .ltab .bad{color:var(--red)}
+.ltab tr.live td{background:#10281b}
+.mode{background:var(--panel);border:1px solid var(--edge);border-radius:3px;padding:9px 11px;min-width:0;display:flex;flex-direction:column;gap:7px}
+.mode .mh{display:flex;align-items:baseline;gap:8px}
+.mode .mn{font-family:var(--legend);text-transform:uppercase;letter-spacing:.15em;font-size:12px;color:#e6edf3;font-weight:600}
+.mode .src{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dimmer)}
+.mode .mhelp{font-family:var(--mono);font-size:10.5px;line-height:1.5;color:var(--dimmer)}
+.seg{display:flex;border:1px solid var(--edge-2);border-radius:3px;overflow:hidden}
+.seg button{flex:1 1 0;min-width:0;background:var(--panel-2);color:var(--dim);border:0;border-left:1px solid var(--edge);
+  padding:8px 6px;font-family:var(--legend);text-transform:uppercase;letter-spacing:.1em;font-size:10.5px;cursor:pointer;white-space:nowrap}
+.seg button:first-child{border-left:0}
+.seg button.cur{background:#123524;color:var(--green);cursor:default}
+.seg button.cur.warnish{background:#3a2a0e;color:var(--amber)}
+.seg button.armed{background:var(--amber);color:#0b0d0f}
+#rstats{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:8px;margin-bottom:8px}
+.tile{background:var(--panel);border:1px solid var(--edge);border-radius:3px;padding:9px 11px;min-width:0}
+.tile .k{font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:10px;color:var(--dimmer)}
+.tile .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:24px;color:#e6edf3;margin-top:2px}
+.tile .v small{font-size:12px;color:var(--dim)}
+.tile .d{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--dim);margin-top:3px;overflow-wrap:anywhere}
+.split{height:5px;display:flex;border-radius:2px;overflow:hidden;margin-top:6px;background:#0e1114}
+.split i{display:block;height:100%}
+#ocombos{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin-bottom:8px}
+.ocombo{background:var(--panel);border:1px solid var(--edge);border-top:2px solid #5e81ac;border-radius:3px;padding:9px 11px;min-width:0}
+.ocombo .oh{display:flex;align-items:baseline;gap:8px}
+.ocombo .on{font-family:var(--legend);text-transform:uppercase;letter-spacing:.14em;font-size:12px;color:#e6edf3;font-weight:600}
+.ocombo .os{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dimmer)}
+.ocombo .ov{font-family:var(--mono);font-size:11px;color:var(--dim);line-height:1.55;margin-top:4px;overflow-wrap:anywhere}
+.ocombo .ov b{color:var(--text);font-weight:500}
+.rrow.err{border-left-color:var(--red)} .rrow.ok{border-left-color:#5e81ac}
+#rlists{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:8px}
+.rlist{background:#0e1114;border:1px solid var(--edge);border-radius:3px;max-height:36vh;overflow:auto}
+.rlist h3{position:sticky;top:0;margin:0;padding:6px 11px;background:#0e1114;border-bottom:1px solid var(--edge);
+  font-family:var(--legend);text-transform:uppercase;letter-spacing:.14em;font-size:10.5px;color:var(--dim);font-weight:600}
+.rrow{display:grid;grid-template-columns:62px minmax(0,1fr);gap:8px;padding:4px 11px;font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--dim);border-left:2px solid transparent}
+.rrow .tm{color:var(--dimmer)} .rrow b{color:var(--text);font-weight:500}
+.rrow.cloud{border-left-color:#5e81ac} .rrow.stop{border-left-color:var(--red)} .rrow.force{border-left-color:var(--amber)}
+.tag2{font-family:var(--legend);text-transform:uppercase;letter-spacing:.1em;font-size:9.5px;border:1px solid var(--edge-2);border-radius:2px;padding:0 4px;margin-left:4px;color:var(--dimmer)}
+
+/* ---- per-model stats (LiteLLM, backend-agnostic) ---- */
+#models{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px;align-items:start;margin-bottom:8px}
+.mcard{background:var(--panel);border:1px solid var(--edge);border-top:2px solid var(--tc);border-radius:3px;padding:10px 12px 11px;
+  min-width:0;display:flex;flex-direction:column;gap:8px}
+.mcard.quietc{opacity:.6}
+.mcard .head{display:flex;align-items:center;gap:9px;min-width:0}
+.mcard .mname{font-family:var(--legend);text-transform:uppercase;letter-spacing:.16em;font-size:13px;font-weight:700;color:var(--tc)}
+.mcard .mside{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--dimmer);white-space:nowrap}
+.pill.live{background:var(--green);border-color:var(--green);color:#06140c}
+.pill.waiting{background:#1f3a2c;border-color:var(--green);color:var(--green)}
+.mflight{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--green);border-left:2px solid var(--green);padding:3px 8px;
+  background:#0f1a14;min-width:0;overflow-wrap:anywhere}
+.mflight.waiting{color:#8fd8b0;border-left-color:#2b6b49;background:#0e1612}
+.mflight .pv{color:var(--dim)}
+.rrow.bad{border-left-color:var(--red)} .rrow.cxl{border-left-color:var(--amber)} .rrow.mock{border-left-color:#8a939c}
+
+/* ---- bottom summary strip (read-only; controls live in the page) ---- */
+#bar{position:fixed;left:0;right:0;bottom:0;z-index:16;background:#0e1114f2;backdrop-filter:blur(6px);
+  border-top:1px solid var(--edge-2);padding:6px 10px calc(6px + env(safe-area-inset-bottom,0px));
+  display:flex;gap:4px;align-items:center;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+#bar::-webkit-scrollbar{display:none}
+#bar .g{display:flex;align-items:center;gap:6px;flex:0 0 auto;padding:4px 9px;border-radius:3px;cursor:pointer;
+  border:1px solid transparent;font-family:var(--mono);font-size:11px;color:var(--dim);white-space:nowrap}
+#bar .g:hover{border-color:var(--edge-2);background:var(--panel)}
+#bar .g b{color:#e6edf3;font-weight:500}
+#bar .g .lbl{font-family:var(--legend);text-transform:uppercase;letter-spacing:.12em;font-size:9.5px;color:var(--dimmer)}
+#bar .g svg{flex:0 0 auto;display:block}
+#bar .sep{width:1px;height:20px;background:var(--edge);flex:0 0 auto;margin:0 2px}
+#bar .dots{display:flex;gap:3px}
+#bar .dots i{width:8px;height:8px;border-radius:50%;background:#2a3138;display:block}
+#bar .dots i.on{box-shadow:0 0 6px currentColor}
+#bar .dots i.gen{animation:pulse 1s infinite}
+#bar .mini{width:44px;height:5px;border-radius:2px;overflow:hidden;display:flex;background:#1b2025}
+#bar .mini i{display:block;height:100%}
+#bar .ok{color:var(--green)} #bar .warn{color:var(--amber)} #bar .bad{color:var(--red)}
+@media (max-width:820px){
+  #bar{flex-wrap:wrap;justify-content:center;gap:2px 0;overflow-x:visible}
+  #bar .g{padding:3px 6px;gap:4px}
+  #bar .g .lbl,#bar .sep{display:none}
+}
+#err{position:fixed;left:8px;right:8px;bottom:calc(var(--bar-h) + 8px);z-index:30;background:#3a1414;border:1px solid var(--red);
+  color:#ffd9d9;border-radius:3px;padding:8px 10px;font-family:var(--mono);font-size:11px;display:none;overflow-wrap:anywhere}
+#err.ok{background:#10281b;border-color:var(--green);color:#c8f5dc}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="overall" id="overall"></span>
+  <span class="title">__WANDA_NAME__</span>
+  <span class="tag">LLM stack</span>
+  <span class="sub mono mt" id="clock">connecting…</span>
+</header>
+
+<section>
+  <h2>Status</h2>
+  <div id="lamps"></div>
+</section>
+
+<section>
+  <h2>Traffic <span class="aside"><span id="flowsum"></span><span class="winsel" id="winsel"></span></span></h2>
+  <div id="flowbox"><svg id="flow" xmlns="http://www.w3.org/2000/svg"></svg></div>
+</section>
+
+<section>
+  <h2>Tiers <span class="aside"><span id="route">LiteLLM :4000 → llama-swap :8001 → mtplx</span>
+    <button class="bar-btn" id="unloadall" style="margin-left:10px;padding:3px 8px">Unload all</button></span></h2>
+  <div id="tiers"></div>
+</section>
+
+<section id="modelsec">
+  <h2>Models <span class="aside"><span id="modelaside">every request through LiteLLM · any backend</span><span class="winsel" id="mwinsel"></span></span></h2>
+  <div id="models"></div>
+  <div class="rlist"><h3>Recent requests</h3><div id="mrecent"><div class="quiet">no requests logged yet</div></div></div>
+</section>
+
+<section>
+  <h2>Controls &amp; routing <span class="aside" id="routeaside">local tiers first · overflow to OmniRoute · one backend per conversation</span></h2>
+  <div id="modes"></div>
+  <div id="rstats"></div>
+  <h2 style="margin-top:12px">OmniRoute overflow <span class="aside" id="omniaside">combos from ~/.litellm/config.yaml</span></h2>
+  <div id="ocombos"></div>
+  <div id="rlists">
+    <div class="rlist"><h3>New conversations</h3><div id="rrecent"><div class="quiet">no routing decisions yet</div></div></div>
+    <div class="rlist"><h3>OmniRoute calls · this stack's key</h3><div id="rlomni"><div class="quiet">no OmniRoute calls yet</div></div></div>
+    <div class="rlist"><h3>Loop breaker</h3><div id="rloops"><div class="quiet">no loops detected in 24 h</div></div></div>
+    <div class="rlist"><h3>Media · prompts answered by the cloud endpoint</h3><div id="rmedia"><div class="quiet">no media prompts in 24 h</div></div></div>
+  </div>
+</section>
+
+<section id="lorasec">
+  <h2>LoRA <span class="aside" id="loraaside">captured traces → ~/lora/runs (lora/run.sh) → fused packs in ~/lora/packs · lora/README.md</span></h2>
+  <div class="lrow"><div id="loramodes"></div><div id="lstats"></div></div>
+  <div class="llists">
+    <div class="rlist"><h3>Runs · ~/lora/runs</h3><div id="lruns"><div class="quiet">no runs yet</div></div></div>
+    <div class="rlist"><h3>Packs · ~/lora/packs</h3><div id="lpacks"><div class="quiet">no packs yet</div></div></div>
+  </div>
+</section>
+
+<section>
+  <h2>Throughput <span class="aside">last 10 min · each bar = a request, height = decode tok/s</span></h2>
+  <div id="tracebox">
+    <canvas id="trace"></canvas>
+    <div class="tracefoot"><span><i style="background:#f0a92b55"></i>loading</span><span><i style="background:#39424a"></i>idle</span>
+      <span><i style="background:#27d07c88"></i>prefill</span><span><i style="background:var(--green)"></i>generating</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>Requests &amp; events <span class="aside" id="feedcount"></span></h2>
+  <div id="feed"><div class="quiet">waiting for the first request…</div></div>
+</section>
+
+<section>
+  <h2>Services</h2>
+  <div id="services"></div>
+</section>
+
+<section>
+  <h2>Logs</h2>
+  <div id="tabs"></div>
+  <div id="logbox"><pre id="logtext">…</pre></div>
+</section>
+
+<div id="err"></div>
+<nav id="bar"></nav>
+
+<script>
+"use strict";
+const TOKEN = "__WANDA_TOKEN__";
+const WANDA_NAME = "__WANDA_NAME__";
+let TIERS = ["opus","sonnet","haiku"];   // replaced by the status feed's tier_colors (tiers.conf order)
+const TC = {opus:"#c39bd3", sonnet:"#88c0d0", haiku:"#a3be8c"};
+const S = {UNLOADED:0, LOADING:1, IDLE:2, PREFILL:3, GENERATING:4, UNREACHABLE:5};
+const WINDOW_S = 600;
+const LOG_TABS = [["swap","LLAMA-SWAP"],["litellm","LITELLM"],["caddy","CADDY"],["modes","MODES"],["omniroute","OMNIROUTE"],["loops","LOOPS"],["admit","ADMIT"],["media","MEDIA"],["rescue","RESCUE"],["stats","REQUESTS"]];
+
+/* ---- helpers --------------------------------------------------------------------------- */
+const $ = id => document.getElementById(id);
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!=null) e.textContent=text; return e; }
+const f0 = x => x==null ? "–" : Math.round(x).toLocaleString();
+const f2 = x => x==null ? "–" : x.toFixed(2);
+const gb = b => b==null ? "–" : (b/1e9).toFixed(1)+"G";
+const pct = (a,b) => (a==null||!b) ? "–" : Math.round(100*a/b)+"%";
+function kfmt(n){ if(n==null) return "–"; if(n>=1e9) return (n/1e9).toFixed(2)+"B"; if(n>=1e6) return (n/1e6).toFixed(1)+"M";
+  if(n>=1e4) return (n/1e3).toFixed(0)+"K"; if(n>=1e3) return (n/1e3).toFixed(1)+"K"; return String(n); }
+function dur(s){ if(s==null) return "–"; s=Math.max(0,Math.round(s));
+  if(s>=3600) return Math.floor(s/3600)+"h"+String(Math.floor(s%3600/60)).padStart(2,"0")+"m";
+  if(s>=60) return Math.floor(s/60)+"m"+String(s%60).padStart(2,"0")+"s"; return s+"s"; }
+const hhmmss = t => new Date(t*1000).toTimeString().slice(0,8);
+
+async function api(path, body){
+  const o = {headers:{"X-Wanda-Token":TOKEN}};
+  if(body){ o.method="POST"; o.headers["Content-Type"]="application/json"; o.body=JSON.stringify(body); }
+  const r = await fetch(path, o); const text = await r.text();
+  let j; try{ j = JSON.parse(text); }catch(e){ throw new Error(r.status+" "+text.slice(0,120)); }
+  if(!r.ok) throw new Error(r.status+" "+(j.error||r.statusText));
+  return j;
+}
+let toastTimer=null;
+function toast(msg, ok){ const e=$("err"); e.textContent=msg; e.className=ok?"ok":""; e.style.display="block";
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>{e.style.display="none";}, ok?3500:9000); }
+
+/* Two-press confirm. The armed node is mutated in place and never rebuilt by a tick, or the
+   "press again" lands on an orphan and the button looks dead. */
+let armed=null, armTimer=null;
+function disarm(){ if(armed){ armed.classList.remove("armed"); armed.textContent=armed.dataset.label; } armed=null; clearTimeout(armTimer); }
+function confirmPress(btn, fn){
+  if(armed!==btn){ disarm(); armed=btn; btn.dataset.label=btn.textContent; btn.classList.add("armed");
+    btn.textContent="PRESS AGAIN"; armTimer=setTimeout(disarm, 5000); return; }
+  disarm(); fn();
+}
+
+/* ---- lamps ----------------------------------------------------------------------------- */
+function lamps(p){
+  const L=[], m=p.machine||{}, ll=p.litellm, sw=p.swap||{};
+  L.push(!ll ? {n:"LiteLLM",s:"gray",d:"probing…"}
+    : ll.ok ? {n:"LiteLLM",s:"green",d:`0.0.0.0:4000 · ${ll.version?("v"+ll.version+" · "):""}${ll.ms}ms`}
+    : {n:"LiteLLM",s:"red",d:"not answering on :4000 — "+ll.error});
+  const loaded = TIERS.filter(t=>p.tiers[t] && p.tiers[t].state>=S.IDLE && p.tiers[t].state<S.UNREACHABLE).length;
+  const loading = TIERS.filter(t=>p.tiers[t] && p.tiers[t].state===S.LOADING).length;
+  L.push(sw.ok ? {n:"llama-swap",s:"green",d:`${sw.version||"?"} · ${loaded}/3 loaded${loading?` · ${loading} loading`:""}`}
+               : {n:"llama-swap",s:"red",d:"127.0.0.1:8001 unreachable — "+(sw.error||"")});
+  const snapM = TIERS.map(t=>p.tiers[t]&&p.tiers[t].snap).find(Boolean);
+  const avail = m.mem_available, total = m.mem_total;
+  const swapFrac = m.swap_total ? m.swap_used/m.swap_total : 0;
+  const pr = {1:"normal",2:"warn",4:"critical"}[m.pressure] || "?";
+  L.push({n:"Memory", s: m.pressure>=4?"red": (m.pressure>=2||swapFrac>.85)?"amber":"green",
+    d:`${gb(avail)} free of ${gb(total)} · pressure ${pr} · swap ${gb(m.swap_used)}/${gb(m.swap_total)}`});
+  L.push({n:"GPU", s: m.gpu_util==null?"gray":"green",
+    d: m.gpu_util==null ? "no ioreg reading" : `${m.gpu_util}% busy · ${gb(m.gpu_mem)} in use · load ${m.load.toFixed(1)}`
+       + (snapM&&snapM.machine ? ` · ${snapM.machine.chip}` : "")});
+  const rt=p.routing;
+  if(rt && rt.modes){
+    const mv=k=>(rt.modes.find(m=>m.key===k)||{}).value;
+    const route=mv("route"), adm=mv("admit"), lb=mv("loops"), h=rt.h1||{};
+    L.push({n:"Routing", s: rt.error?"red": (route!=="auto"||adm!=="enforce"||lb!=="enforce")?"amber":"green",
+      d:`route ${route} · admission ${adm} · loops ${lb}` + (h.total!=null?` · 1h ${h.total} req, ${h.cloud||0} cloud`:"")});
+  }
+  for(const f of p.flags||[]){
+    L.push({n:f.label, s: f.raw==null?"red": f.value?"green":"amber",
+      d: f.raw==null ? "flag file missing" : (f.value?"agents ALLOWED":"agents BLOCKED")+(f.last?` · ${f.last.replace(/^(\S+)T(\S+)Z/,"$1 $2Z")}`:"")});
+  }
+  const box=$("lamps"), frag=document.createDocumentFragment();
+  for(const l of L){ const d=el("div","lamp "+l.s); d.appendChild(el("span","bulb"));
+    const w=el("div","mt"); w.appendChild(el("div","name",l.n)); w.appendChild(el("div","detail mt",l.d)); d.appendChild(w); frag.appendChild(d); }
+  box.replaceChildren(frag);
+  return L;
+}
+
+/* ---- tier cards -----------------------------------------------------------------------
+   Built once per tier; each tick rewrites the text of a fixed set of nodes, so the armed
+   UNLOAD button survives the 1 s refresh. */
+const cards={};
+function stat(k){ const s=el("div","stat"); s.appendChild(el("div","k",k)); const v=el("div","v","–"); s.appendChild(v); return [s,v]; }
+function meter(){ const m=el("div","meter"); const l=el("div","lbl"); const a=el("span"), b=el("span"); l.append(a,b);
+  const tr=el("div","track"); const f=el("div","fill"); tr.appendChild(f); m.append(l,tr); return {m,a,b,f}; }
+function buildCard(t){
+  const c = el("div","tier off"); c.style.setProperty("--tc", TC[t]);
+  const head=el("div","head"); const bulb=el("span","bulb"); const nm=el("span","tname",t);
+  const pill=el("span","pill","…"); const port=el("span","port"); head.append(bulb,nm,pill,port);
+  const model=el("div","model");
+  const big=el("div","big"); const num=el("span","num","–"); const unit=el("span","unit","tok/s"); const what=el("span","what"); big.append(num,unit,what);
+  const flight=el("div","flight"); flight.style.display="none";
+  const stats=el("div","stats"); const V={};
+  for(const k of ["TTFT","Prefill t/s","E2E t/s","MTP accept","Cached","Context","5m mean","5m p95","Max","Requests","Prompt tok","Gen tok"]){
+    const [s,v]=stat(k); stats.appendChild(s); V[k]=v; }
+  const mem=meter(), ttl=meter();
+  const note=el("div","note");
+  const acts=el("div","acts"); const load=el("button",null,"Load"); const unload=el("button",null,"Unload"); acts.append(load,unload);
+  load.onclick=()=>tierAction(t,"load");
+  unload.onclick=()=>confirmPress(unload,()=>tierAction(t,"unload"));
+  c.append(head,model,big,flight,stats,mem.m,ttl.m,note,acts);
+  $("tiers").appendChild(c);
+  return {c,bulb,pill,port,model,num,unit,what,flight,stats,V,mem,ttl,note,load,unload};
+}
+async function tierAction(t,a){
+  try{ const r=await api("/api/tier",{tier:t,action:a}); toast(`${t}: ${r.note}`, true); }
+  catch(e){ toast(`${t} ${a} failed — ${e.message}`); }
+}
+function renderTier(t, d, now){
+  const k = cards[t] || (cards[t]=buildCard(t));
+  const st = d.state, s = d.snap;
+  k.c.className = "tier " + d.state_name + (st===S.UNLOADED||st===S.UNREACHABLE ? " off" : "");
+  k.bulb.className = "bulb " + (st===S.GENERATING||st===S.PREFILL ? "green" : st===S.IDLE ? "" : st===S.LOADING ? "amber" : st===S.UNREACHABLE ? "red" : "");
+  if(st===S.IDLE){ k.bulb.style.background=TC[t]; k.bulb.style.boxShadow=`0 0 8px ${TC[t]}66`; } else { k.bulb.style.background=""; k.bulb.style.boxShadow=""; }
+  k.pill.className = "pill " + d.state_name; k.pill.textContent = d.state_name;
+  k.port.textContent = d.port ? ":"+d.port : "";
+  k.model.textContent = d.model || "?"; k.model.title = d.model || "";
+  const on = !!s;
+  k.stats.style.display = on ? "" : "none"; k.mem.m.style.display = on ? "" : "none"; k.ttl.m.style.display = (on && st===S.IDLE) ? "" : "none";
+  k.load.disabled = st!==S.UNLOADED; k.unload.disabled = !(st>=S.LOADING && st<=S.GENERATING);
+  if(armed===k.unload && k.unload.disabled) disarm();
+
+  const f = s && s.inflight && s.inflight[0];
+  if(f){
+    k.flight.style.display="";
+    const pf=f.prefill;
+    let txt = `▶ ${dur(f.age_s)} · prompt ${f0(f.prompt_tokens)} tok`;
+    if(st===S.PREFILL && pf && pf.total) txt += ` · prefill ${pct(pf.done,pf.total)} (${f0(pf.done)}/${f0(pf.total)}) @ ${f0(pf.tok_s)} t/s`;
+    if(f.gen_tokens) txt += ` · gen ${f0(f.gen_tokens)} @ ${f0(f.decode_tok_s)} t/s`;
+    if(s.inflight.length>1) txt += ` · +${s.inflight.length-1} queued`;
+    k.flight.replaceChildren(document.createTextNode(txt+" "));
+    if(f.preview){ k.flight.appendChild(el("span","pv","“"+f.preview+"”")); }
+  } else k.flight.style.display="none";
+
+  if(f && st===S.GENERATING && f.decode_tok_s!=null){ k.num.textContent=f0(f.decode_tok_s); k.what.textContent="decoding now"; }
+  else if(f && st===S.PREFILL){ k.num.textContent=f0(f.prefill&&f.prefill.tok_s); k.what.textContent="prefill now"; }
+  else if(!s && d.live){ k.num.textContent="–"; k.what.textContent = st===S.PREFILL ? "waiting for first token" : ""; }
+  else if(s && s.latest){ k.num.textContent=f0(s.latest.decode); k.what.textContent="last request"; }
+  else { k.num.textContent="–"; k.what.textContent = st===S.LOADING?"loading weights…":""; }
+
+  if(!s){
+    const lv=d.live;   // backends without an mtplx snapshot (TensorFold): LiteLLM's in-flight view
+    if(lv){
+      k.flight.style.display="";
+      k.flight.textContent = `▶ ${dur(lv.age)} · prompt ~${f0(lv.prompt)} tok${lv.gen?` · gen ~${f0(lv.gen)} @ ${f0(lv.tok_s)} t/s`:""}${lv.n>1?` · +${lv.n-1} queued`:""}`;
+      if(lv.tok_s){ k.num.textContent=f0(lv.tok_s); k.what.textContent="decoding now"; }
+    }
+    k.note.textContent = st===S.UNLOADED ? `ttl ${d.ttl??"?"}s · loads on first request`
+                       : st===S.LOADING ? `starting on :${d.port||"?"}${d.note?" · "+d.note:""}` : (d.note||"");
+    return;
+  }
+  const L=s.latest||{}, lt=s.lifetime||{}, r=s.rolling||{};
+  const V=k.V;
+  V["TTFT"].textContent = L.ttft!=null ? f2(L.ttft)+"s" : "–";
+  V["Prefill t/s"].textContent = f0(L.prefill);
+  V["E2E t/s"].textContent = f0(L.e2e);
+  V["MTP accept"].textContent = L.accept!=null ? `d${L.depth} ${Math.round(L.accept*100)}%` : "–";
+  V["Cached"].textContent = L.prompt ? `${pct(L.cached,L.prompt)} ${L.cache_src||""}` : "–";
+  V["Context"].textContent = s.ctx ? Math.round(s.ctx/1024)+"K · "+(s.profile||"") : "–";
+  V["5m mean"].textContent = r.count ? f0(r.mean) : "–";
+  V["5m p95"].textContent = r.count ? f0(r.p95) : "–";
+  V["Max"].textContent = f0(r.sticky_all_time_max);
+  V["Requests"].textContent = f0(lt.requests_total) + (lt.cancelled_total?` (${lt.cancelled_total}✗)`:"");
+  V["Prompt tok"].textContent = kfmt(lt.prompt_tokens_total) + (lt.prompt_tokens_total?` · ${pct(lt.cached_tokens_total,lt.prompt_tokens_total)} hit`:"");
+  V["Gen tok"].textContent = kfmt(lt.completion_tokens_total);
+
+  const m=s.mem||{}, b=s.bank||{};
+  k.mem.a.textContent = `mem ${gb(m.footprint)} · weights ${gb(m.weights)}`;
+  k.mem.b.textContent = `session bank ${b.entries||0} · ${gb(b.bytes)}/${gb(b.max)}`;
+  k.mem.f.style.width = (b.max ? Math.min(100,100*(b.bytes||0)/b.max) : 0)+"%";
+  k.mem.m.classList.toggle("warn", b.max && b.bytes/b.max>.9);
+
+  if(st===S.IDLE && d.ttl){
+    const idle = now - (s.last_activity||now), left = Math.max(0, d.ttl-idle);
+    k.ttl.a.textContent = `idle ${dur(idle)}`; k.ttl.b.textContent = `unloads in ${dur(left)} (ttl ${d.ttl}s)`;
+    k.ttl.f.style.width = (100*left/d.ttl)+"%";
+  }
+  k.note.textContent = L.client ? `last: ${f0(L.prompt)}→${f0(L.gen)} tok · ${L.tools?L.tools+" tools · ":""}${L.client} · up ${dur(s.uptime_s)}` : `up ${dur(s.uptime_s)}`;
+}
+
+/* ---- throughput trace -------------------------------------------------------------------
+   One lane per tier, newest at the right. Nothing is painted for UNLOADED; a flat slate line
+   means loaded and idle; bars are real decode samples, scaled per lane to that lane's best. */
+const hist = {};
+const done = new Map();   // completed requests in the window, keyed tier@t
+function pushDone(list, now){
+  for(const r of list||[]) done.set(r.tier+"@"+r.t, r);
+  for(const [k,r] of done) if(r.t < now-WINDOW_S-60) done.delete(k);
+}
+function pushHist(p){
+  for(const t of TIERS){ const d=p.tiers[t]; if(!d) continue;
+    const s=d.snap, f=s&&s.inflight&&s.inflight[0];
+    const tok = f ? (d.state===S.GENERATING ? f.decode_tok_s : f.prefill&&f.prefill.tok_s) : null;
+    const h=hist[t]||(hist[t]=[]); h.push([p.ts, d.state, tok]); while(h.length && h[0][0] < p.ts-WINDOW_S-5) h.shift(); }
+}
+function drawTrace(now){
+  const cv=$("trace"), dpr=window.devicePixelRatio||1, W=cv.clientWidth||320, H=14+45*TIERS.length;
+  cv.style.height=H+"px";
+  cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+  const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
+  const LW=58, x0=LW+4, x1=W-6, pw=Math.max(20,x1-x0), laneH=Math.floor((H-14)/TIERS.length);
+  const X = t => x0 + pw*(1-(now-t)/WINDOW_S);
+  g.font='10px ui-monospace,"SF Mono",Menlo,monospace'; g.textBaseline="middle";
+  TIERS.forEach((t,i)=>{
+    const top=i*laneH, base=top+laneH-6, peakH=laneH-12, h=(hist[t]||[]).filter(s=>s[0]>=now-WINDOW_S);
+    const rs=[...done.values()].filter(r=>r.tier===t&&r.t>=now-WINDOW_S).sort((a,b)=>a.t-b.t);
+    const vmax = Math.max(40, ...h.map(s=>s[2]||0), ...rs.map(r=>r.decode||0));
+    const lastTok = h.length && h[h.length-1][2] ? h[h.length-1] : (rs.length ? [0,0,rs[rs.length-1].decode] : null);
+    g.fillStyle=TC[t]; g.fillText(t.toUpperCase(),4,top+laneH/2-6);
+    g.fillStyle="#565f68"; g.fillText(lastTok?Math.round(lastTok[2])+" t/s":"",4,top+laneH/2+7);
+    g.strokeStyle="#1c2126"; g.lineWidth=1; g.beginPath(); g.moveTo(x0,base+.5); g.lineTo(x1,base+.5); g.stroke();
+    for(let j=0;j<h.length;j++){
+      const [ts,st,tok]=h[j], nx = j+1<h.length ? X(h[j+1][0]) : X(ts)+pw/WINDOW_S*1.2, x=X(ts), w=Math.max(1,nx-x);
+      if(st===S.IDLE){ g.fillStyle="#39424a"; g.fillRect(x,base-1,w,2); }
+      else if(st===S.LOADING){ g.fillStyle="#f0a92b40"; g.fillRect(x,base-peakH*.35,w,peakH*.35); }
+      else if(st===S.UNREACHABLE){ g.fillStyle="#ff4d4d"; g.fillRect(x,base-peakH,w,2); }
+      else if(st===S.PREFILL){ g.fillStyle="#27d07c55"; g.fillRect(x,base-peakH*.5,w,peakH*.5); }
+      else if(st===S.GENERATING){ const hh=Math.max(2,peakH*Math.min(1,(tok||0)/vmax)); g.fillStyle=TC[t]; g.fillRect(x,base-hh,w,hh); }
+    }
+    /* Completed requests, drawn over their real span (end - elapsed .. end). Short requests finish
+       between 1 Hz samples, so these carry most of the signal for a busy fast tier. */
+    for(const r of rs){
+      if(r.decode==null) continue;
+      const xa=Math.max(x0,X(r.t-(r.elapsed||1))), xb=X(r.t), hh=Math.max(2,peakH*Math.min(1,r.decode/vmax));
+      g.fillStyle=TC[t]; g.globalAlpha=.85; g.fillRect(xa, base-hh, Math.max(1.5,xb-xa), hh); g.globalAlpha=1;
+    }
+  });
+  g.fillStyle="#565f68"; const y=H-5;
+  for(const [lbl,sec] of [["-10m",600],["-5m",300],["-1m",60],["now",0]]){ const x=X(now-sec); g.textAlign=sec===600?"left":sec===0?"right":"center"; g.fillText(lbl,x,y); }
+  g.textAlign="left";
+}
+
+/* Lists read like logs: oldest at the top, newest at the bottom. A list scrolled to the bottom
+   (or filled for the first time) follows new rows; one scrolled up to read stays put. */
+function fillLog(id, node){
+  const list=$(id), box=list.closest(".rlist")||list;
+  const stuck = !box.dataset.filled || box.scrollTop+box.clientHeight >= box.scrollHeight-24;
+  list.replaceChildren(node); box.dataset.filled="1";
+  if(stuck) box.scrollTop=box.scrollHeight;
+}
+
+/* ---- feed: completed requests + load/unload/flag events, newest at the bottom ---------- */
+let feedKey="";
+function renderFeed(p){
+  const items = (p.requests||[]).map(r=>({t:r.t,kind:"req",r})).concat((p.events||[]).map(e=>({t:e.t,kind:"ev",e})));
+  items.sort((a,b)=>b.t-a.t);
+  const key = items.length+":"+(items[0]?items[0].t:0);
+  if(key===feedKey) return; feedKey=key;
+  $("feedcount").textContent = `${(p.requests||[]).length} requests since panel start`;
+  if(!items.length){ fillLog("feed", el("div","quiet","No requests yet since the panel started. Watching every loaded tier's mtplx snapshot once a second.")); return; }
+  const frag=document.createDocumentFragment();
+  for(const it of items.slice(0,80).reverse()){
+    if(it.kind==="req"){
+      const r=it.r, row=el("div","row"); row.style.borderLeftColor=TC[r.tier]+"88";
+      row.appendChild(el("span","tm",hhmmss(r.t)));
+      const who=el("span","who",r.tier); who.style.color=TC[r.tier]; row.appendChild(who);
+      const tx=el("span","txt");
+      tx.append(el("b",null,`${f0(r.prompt)}→${f0(r.gen)}`), document.createTextNode(` tok · decode `), el("b",null,f0(r.decode)),
+        document.createTextNode(` t/s · ttft ${f2(r.ttft)}s · cached ${pct(r.cached,r.prompt)} ${r.cache_src||""}`
+          + (r.accept!=null?` · MTP ${Math.round(r.accept*100)}%`:"") + (r.tools?` · ${r.tools} tools`:"")
+          + (r.client?` · ${r.client}`:"") + (r.batch>1?` · +${r.batch-1} more this second`:"")));
+      row.appendChild(tx); frag.appendChild(row);
+    } else {
+      const e=it.e, row=el("div","row ev "+e.kind);
+      row.appendChild(el("span","tm",hhmmss(e.t)));
+      const who=el("span","who",e.tier||"panel"); if(e.tier) who.style.color=TC[e.tier]; row.appendChild(who);
+      row.appendChild(el("span","txt",e.text)); frag.appendChild(row);
+    }
+  }
+  fillLog("feed", frag);
+}
+
+/* ---- services (from services.json — /add-service keeps adding here) --------------------- */
+let svcKey="";
+function renderServices(list){
+  const key=JSON.stringify(list); if(key===svcKey) return; svcKey=key;
+  const frag=document.createDocumentFragment();
+  for(const s of list||[]){
+    const a=el(s.disabled?"div":"a","svc "+s.state); if(!s.disabled) a.href=s.href;
+    const ico=el("span","ico"); ico.style.setProperty("--icon",`url("/icons/${s.icon||"service.svg"}")`);
+    const mid=el("div","mt"); mid.appendChild(el("div","name",s.name));
+    mid.appendChild(el("div","desc mt", s.disabled ? (s.note||"disabled") : (s.description||"")));
+    a.append(ico, mid, el("span","bulb")); a.title = s.disabled ? "disabled" : (s.state+" · "+s.href);
+    frag.appendChild(a);
+  }
+  $("services").replaceChildren(frag);
+}
+
+/* ---- logs ------------------------------------------------------------------------------ */
+let logTab="swap", logEpoch=0;
+function buildTabs(){
+  for(const [k,l] of LOG_TABS){ const b=el("button",null,l); b.dataset.key=k; b.onclick=()=>{logTab=k; logEpoch++; paintTabs(); $("logtext").textContent="…"; refreshLog(logEpoch, true);}; $("tabs").appendChild(b); }
+  paintTabs(); refreshLog(logEpoch, true);
+}
+function paintTabs(){ for(const b of $("tabs").children) b.classList.toggle("on", b.dataset.key===logTab); }
+async function refreshLog(epoch, jump){
+  const box=$("logbox"), stuck = jump || box.scrollTop+box.clientHeight >= box.scrollHeight-24;
+  try{ const d=await api("/api/log?name="+logTab); if(epoch!==logEpoch) return; $("logtext").textContent=d.text||"(empty)"; }
+  catch(e){ if(epoch===logEpoch) $("logtext").textContent="log unavailable — "+e.message; }
+  if(stuck) box.scrollTop=box.scrollHeight;
+}
+
+/* ---- OmniRoute overflow: combo health + the calls that came through this stack's key ---- */
+let oKey="";
+const shortModel = m => String(m||"").split("/").pop();
+function renderOmni(o){
+  if(!o) return;
+  const key=JSON.stringify(o); if(key===oKey) return; oKey=key;
+  $("omniaside").textContent = o.disabled ? "not configured — set OMNIROUTE_BASE in ~/.litellm/env" : o.error ? "error — "+o.error : "combos from ~/.litellm/config.yaml";
+  const cf=document.createDocumentFragment();
+  for(const t of TIERS){
+    const c=(o.combos||{})[t]; const box=el("div","ocombo"); box.style.borderTopColor=TC[t];
+    const h=el("div","oh"); h.append(el("span","on",`cloud/${t}`), el("span","os", c ? `${c.combo} · ${c.strategy||"?"}` : ((o.tiers||{})[t]||"not configured")));
+    box.appendChild(h);
+    if(c){
+      const rate = c.requests ? Math.round(100*c.ok/c.requests) : null;
+      const v=el("div","ov"); v.innerHTML = `<b>${f0(c.requests)}</b> req · <b>${rate==null?"–":rate+"%"}</b> ok · avg <b>${c.avg_ms==null?"–":c.avg_ms+" ms"}</b>`
+        + (c.fallbacks?` · ${c.fallbacks} fallbacks`:"") + (c.fail?` · <span style="color:var(--red)">${c.fail} failed</span>`:"")
+        + `<br>${(c.models||[]).map(m=>`${shortModel(m.model)} ${m.requests}× ${m.rate!=null?m.rate+"%":""}`).join(" · ")||"no calls yet"}`
+        + (c.last&&!isNaN(Date.parse(c.last))?`<br>last ${new Date(c.last).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"})}`:"");
+      box.appendChild(v);
+    } else box.appendChild(el("div","ov","no metrics"));
+    cf.appendChild(box);
+  }
+  $("ocombos").replaceChildren(cf);
+  const lf=document.createDocumentFragment();
+  for(const c of (o.calls||[]).slice(0,30).reverse()){
+    const bad = c.error || (c.status && c.status>=400);
+    const row=el("div","rrow "+(bad?"err":"ok")); row.appendChild(el("span","tm",c.t&&!isNaN(Date.parse(c.t)) ? hhmmss(Date.parse(c.t)/1000) : "–"));
+    const tx=el("span","mt"); const b=el("b",null,shortModel(c.model)||"?");
+    tx.append(document.createTextNode(`${c.combo||c.requested||"?"} → `), b,
+      document.createTextNode(` · ${c.provider||""} · ${c.status} · ${c.ms!=null?c.ms+"ms":""} · ${f0(c.in)}→${f0(c.out)} tok${c.error?" · "+c.error:""}`));
+    row.appendChild(tx); lf.appendChild(row);
+  }
+  fillLog("rlomni", lf.childNodes.length ? lf : el("div","quiet", o.disabled ? "cloud overflow not configured" : o.error ? "OmniRoute unavailable — "+o.error : "no calls from this stack's key yet"));
+}
+
+/* ---- per-model stats from the ultron_stats LiteLLM hook ---------------------------------
+   Same numbers for every backend (mtplx, TensorFold, OmniRoute). ttft = backend first byte;
+   "seen" = when the client got its first content (later when a bridge buffers reasoning). */
+let mWin="3600", mKey="";
+function buildModelWin(){
+  for(const [w,l] of [["900","15m"],["3600","1h"],["86400","24h"]]){ const b=el("button",null,l); b.dataset.w=w;
+    b.onclick=()=>{ mWin=w; mKey=""; for(const x of $("mwinsel").children) x.classList.toggle("on",x.dataset.w===w); if(last) renderModels(last.llm); };
+    $("mwinsel").appendChild(b); }
+  for(const x of $("mwinsel").children) x.classList.toggle("on",x.dataset.w===mWin);
+}
+const secs = x => x==null ? "–" : (x<10 ? x.toFixed(2) : x.toFixed(1))+"s";
+const agoText = t => { const d=Date.now()/1000-t; return d<90 ? Math.round(d)+"s ago" : d<5400 ? Math.round(d/60)+"m ago" : (d/3600).toFixed(1)+"h ago"; };
+const rate = x => x==null ? "–" : Math.round(x);
+function whoLabel(w){ if(!w) return ""; const [a,h]=w.split("@"); return agentMeta(a).name+(h&&h!=="?"?" @"+h:""); }
+function renderModels(l){
+  if(!l) return;
+  const key=mWin+JSON.stringify(l); if(key===mKey) return; mKey=key;
+  if(l.error){ $("modelaside").textContent="error — "+l.error; }
+  const agg=(l.windows||{})[mWin]||{}, live=l.live||[];
+  const eps=TIERS.map(t=>"ultron/"+t);
+  for(const e of [...Object.keys(agg), ...live.map(r=>r.endpoint)]) if(e && !eps.includes(e)) eps.push(e);
+  const f=document.createDocumentFragment();
+  for(const ep of eps){
+    const a=agg[ep], fl=live.filter(r=>r.endpoint===ep);
+    const c=el("div","mcard"+(!a&&!fl.length?" quietc":"")); c.style.setProperty("--tc", ep.startsWith("ultron/")||ep.startsWith("cloud/") ? epColor(ep) : "#8a939c");
+    const h=el("div","head"); h.appendChild(el("span","mname",ep));
+    const gen=fl.filter(r=>r.phase==="generating").length;
+    h.appendChild(el("span","pill "+(gen?"live":fl.length?"waiting":""), fl.length ? `${fl.length} in flight` : "idle"));
+    h.appendChild(el("span","mside", a ? `${a.n} req · last ${hhmmss(a.last)}` : "no requests"));
+    c.appendChild(h);
+    for(const r of fl){
+      const d=el("div","mflight"+(r.phase==="generating"?"":" waiting"));
+      const what = r.phase==="generating" ? `gen ~${f0(r.gen_est)} tok${r.tok_s?` @ ${rate(r.tok_s)} t/s`:""} · first ${secs(r.ttft)}`
+        : r.phase==="ending" ? "finishing" : `waiting ${dur(r.age)} · prompt ~${kfmt(r.prompt_est)} tok`;
+      d.textContent = `${dur(r.age)} · ${what}`;
+      const pv=el("span","pv", `  ${whoLabel(r.who)||r.requested}${r.call_type==="anthropic_messages"?" · /v1/messages":""}`);
+      d.appendChild(pv); c.appendChild(d);
+    }
+    const big=el("div","big"); big.append(el("span","num", a&&a.decode_p50!=null?rate(a.decode_p50):"–"), el("span","unit","tok/s"), el("span","what","decode p50"));
+    c.appendChild(big);
+    const g=el("div","stats");
+    const put=(k,v)=>{ const [s,vv]=stat(k); vv.textContent=v; g.appendChild(s); };
+    if(a){
+      put("requests", `${a.ok} ok${a.err?` · ${a.err} err`:""}${a.cancelled?` · ${a.cancelled} cxl`:""}${a.mock?` · ${a.mock} stop`:""}`);
+      if(a.last_err){ put("last error", `${hhmmss(a.last_err)} · ${agoText(a.last_err)}`); g.lastChild.title=a.last_err_msg||""; }
+      put("ttft p50/p95", `${secs(a.ttft_p50)} / ${secs(a.ttft_p95)}`);
+      put("seen p50", secs(a.seen_p50));
+      put("prefill p50", a.prefill_p50==null?"–":rate(a.prefill_p50)+" t/s");
+      put("elapsed p50/p95", `${secs(a.elapsed_p50)} / ${secs(a.elapsed_p95)}`);
+      put("wait p95", secs(a.wait_p95));
+      put("tokens in", kfmt(a.prompt)); put("cached", a.cache_pct==null?"–":a.cache_pct+"%"); put("tokens out", kfmt(a.gen));
+    } else put("window", "nothing in this window");
+    c.appendChild(g); f.appendChild(c);
+  }
+  $("models").replaceChildren(f);
+  const rf=document.createDocumentFragment();
+  for(const r of (l.recent||[]).slice().reverse()){
+    const cls = r.status==="ok" ? "" : (r.status==="cancelled" ? "cxl" : r.status==="mock" ? "mock" : "bad");
+    const row=el("div","rrow "+cls); row.appendChild(el("span","tm",hhmmss(r.ts)));
+    const tx=el("span","mt"); tx.append(el("b",null,r.endpoint||"?"));
+    const inTok = r.prompt!=null ? kfmt(r.prompt) : "~"+kfmt(r.prompt_est), outTok = r.gen!=null ? kfmt(r.gen) : "~"+kfmt(r.gen_est);
+    tx.append(document.createTextNode(` · ${whoLabel(r.who)||r.requested} · ${r.status} · ${inTok}${r.cached?` (${kfmt(r.cached)} cached)`:""}→${outTok} tok`
+      + ` · ttft ${secs(r.ttft)}${r.first_seen!=null&&r.ttft!=null&&r.first_seen-r.ttft>2?` (seen ${secs(r.first_seen)})`:""}`
+      + ` · ${secs(r.elapsed)}${r.decode_tok_s?` · ${rate(r.decode_tok_s)} t/s`:""}${r.wait?` · waited ${secs(r.wait)}`:""}${r.error?" · "+r.error:""}`));
+    row.appendChild(tx); rf.appendChild(row);
+  }
+  fillLog("mrecent", rf.childNodes.length ? rf : el("div","quiet","no requests logged yet"));
+}
+
+/* ---- traffic flow: agents -> Ultron (LiteLLM) -> endpoints ----------------------------
+   Rebuilt when the 3 s routing sample changes; request particles animate on their own loop. */
+const SVGNS="http://www.w3.org/2000/svg";
+const ICON = {
+  term:'<rect x="2.5" y="4" width="19" height="16" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 9.5l3 2.7-3 2.8M12 15h5.5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.5 2v3M17 3.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+  cube:'<path d="M12 2.8l8 4.6v9.2l-8 4.6-8-4.6V7.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 12l8-4.6M12 12v9.2M12 12L4 7.4" fill="none" stroke="currentColor" stroke-width="1.4"/>',
+  pi:'<text x="12" y="18" text-anchor="middle" font-size="19" font-family="Georgia,serif" font-style="italic" fill="currentColor">π</text>',
+  wing:'<path d="M3 16.5C7.5 16 11 13 13 7.5c1 3 .6 5.8-1.3 8.2 2.2-1.1 4.9-1.3 7.8-.3-2.4.8-4.6 2.4-6.2 4.6-4 .6-7.5-.8-10.3-3.5z" fill="currentColor"/><path d="M13 7.5c.8-1.8 2.2-3.2 4-4-1 1.7-1.5 3.3-1.4 5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>',
+  code:'<path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.8 4.5l-3.6 15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  hex:'<path d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M8.3 10l2.6 2-2.6 2M12.8 14.2h3.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  bot:'<rect x="4" y="7.5" width="16" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9.2" cy="13.3" r="1.5" fill="currentColor"/><circle cx="14.8" cy="13.3" r="1.5" fill="currentColor"/><path d="M12 7.5V4.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="3.6" r="1.2" fill="currentColor"/>',
+  chip:'<rect x="6" y="6" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="9.3" y="9.3" width="5.4" height="5.4" rx=".8" fill="currentColor" opacity=".55"/><path d="M9 3v3M12 3v3M15 3v3M9 18v3M12 18v3M15 18v3M3 9h3M3 12h3M3 15h3M18 9h3M18 12h3M18 15h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  cloud:'<path d="M7 18.5h10.6a4.1 4.1 0 0 0 .5-8.15A5.6 5.6 0 0 0 7.3 9.1 4.7 4.7 0 0 0 7 18.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>',
+};
+const AGENT = {
+  "claude-code":{name:"Claude Code", icon:"term", color:"#e08a64"},
+  "pi":{name:"pi", icon:"pi", color:"#7dd3c0"},
+  "hermes":{name:"Hermes", icon:"wing", color:"#c49be0"},
+  "opencode":{name:"opencode", icon:"code", color:"#8fbcbb"},
+  "codex":{name:"Codex", icon:"hex", color:"#9ab0ff"},
+  "other":{name:"Other client", icon:"bot", color:"#8a939c"},
+};
+function agentMeta(a){ const [base,flag]=String(a).split("+"); const m=AGENT[base]||AGENT.other;
+  return flag==="unreal" ? {name:m.name+" · Unreal", icon:"cube", color:"#f0b35a", base:m} : m; }
+const endpoints=()=>[...TIERS.map(t=>["ultron/"+t,"local"]), ...TIERS.map(t=>["cloud/"+t,"cloud"])];
+const epColor = e => e.startsWith("cloud/") ? CLOUD : (TC[e.split("/")[1]]||"#888");
+let flowWin="900", flowKey="", flowPaths={}, particles=[], seenEv=new Set(), flowHubPulse=0;
+function buildWinSel(){
+  for(const [w,l] of [["300","5m"],["900","15m"],["3600","1h"]]){ const b=el("button",null,l); b.dataset.w=w;
+    b.onclick=()=>{ flowWin=w; flowKey=""; for(const x of $("winsel").children) x.classList.toggle("on",x.dataset.w===w); if(last) renderFlow(last); };
+    $("winsel").appendChild(b); }
+  for(const x of $("winsel").children) x.classList.toggle("on",x.dataset.w===flowWin);
+}
+function sv(tag, attrs, parent){ const e=document.createElementNS(SVGNS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); if(parent) parent.appendChild(e); return e; }
+function icon(g, name, x, y, size, color){ const s=sv("svg",{x,y,width:size,height:size,viewBox:"0 0 24 24"},g); s.style.color=color; s.innerHTML=ICON[name]; return s; }
+function fit(str, px, charW){ str=String(str); const n=Math.max(4,Math.floor(px/charW)); return str.length>n ? str.slice(0,n-1)+"…" : str; }
+function curve(x1,y1,x2,y2){ const dx=(x2-x1)*.5; return `M${x1},${y1} C${x1+dx},${y1} ${x2-dx},${y2} ${x2},${y2}`; }
+function renderFlow(p){
+  const fl=p.routing&&p.routing.flow; if(!fl) return;
+  const win=fl[flowWin]||{agents:[],endpoints:{},links:[],total:0}, now=p.ts;
+  const tierState = t => p.tiers[t] ? p.tiers[t].state : S.UNLOADED;
+  const key=JSON.stringify([flowWin,win,TIERS.map(tierState),$("flowbox").clientWidth, Math.floor(now/5), p.omniroute&&p.omniroute.combos]);
+  for(const ev of fl.recent||[]){ const k=ev.t+ev.agent+ev.endpoint; if(!seenEv.has(k)){ seenEv.add(k); spawnParticle(ev); } }
+  if(key===flowKey) return; flowKey=key;
+  const svg=$("flow"); svg.replaceChildren(); flowPaths={};
+  const W=Math.max(620,$("flowbox").clientWidth), agents=win.agents.slice(0,8), rowH=54;
+  const ENDPOINTS=endpoints(), NLOCAL=ENDPOINTS.findIndex(e=>e[1]==="cloud");   // first cloud row: the OmniRoute heading + gap go above it
+  const H=Math.max(300, 40+Math.max(agents.length,1)*rowH, 40+ENDPOINTS.length*44+18);
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.setAttribute("height",H);
+  const defs=sv("defs",{},svg);
+  const cw=Math.min(210, W*.28), ax=12, ex=W-12-cw, hx=W/2, hy=H/2, hr=Math.min(58,H*.19);
+  const gL=sv("g",{},svg), gN=sv("g",{},svg);
+  sv("text",{x:ax+2,y:16,class:"glabel"},gN).textContent="Agents";
+  sv("text",{x:ex+2,y:16,class:"glabel"},gN).textContent="Local · mtplx";
+  const maxA=Math.max(1,...agents.map(a=>a.n)), maxE=Math.max(1,...Object.values(win.endpoints).map(e=>e.n));
+  const width=(n,m)=>2+13*Math.sqrt(n/m);
+  // hub-side offsets so links fan into the ring instead of stacking on one point
+  const aY=i=>34+i*rowH+(H-40-Math.max(agents.length,1)*rowH)/2+rowH/2;
+  const eY=i=>30+i*44+(NLOCAL>=0&&i>=NLOCAL?18:0)+(H-40-ENDPOINTS.length*44-18)/2+22;
+  const grad=(id,c1,c2)=>{ const g=sv("linearGradient",{id,x1:"0",x2:"1",y1:"0",y2:"0"},defs); sv("stop",{offset:"0","stop-color":c1},g); sv("stop",{offset:"1","stop-color":c2},g); return `url(#${id})`; };
+  // agents
+  if(!agents.length){ sv("text",{x:ax+8,y:hy,class:"nsub"},gN).textContent=`no requests in the last ${flowWin/60|0} min`; }
+  agents.forEach((a,i)=>{
+    const m=agentMeta(a.agent), y=aY(i), live=now-a.last<20;
+    const off=(i-(agents.length-1)/2)*Math.min(9,hr*1.4/Math.max(agents.length,1));
+    const d=curve(ax+cw, y, hx-hr*.92, hy+off);
+    const pth=sv("path",{d,class:"link "+(live?"live":now-a.last>300?"idle":""),stroke:grad("ga"+i,m.color,"#ff3b2f"),"stroke-width":width(a.n,maxA)},gL);
+    flowPaths["a:"+a.id]=pth;
+    const g=sv("g",{},gN);
+    sv("rect",{x:ax,y:y-21,width:cw,height:42,rx:6,class:"card"+(live?" hot":""),stroke:live?m.color:"#2a3138"},g);
+    sv("rect",{x:ax,y:y-21,width:3,height:42,rx:1.5,fill:m.color},g);
+    icon(g,m.icon,ax+10,y-12,24,m.color);
+    const tw=cw-50-(a.loops?40:0);
+    sv("text",{x:ax+42,y:y-3,class:"nlabel"},g).textContent=fit(m.name,tw,8.4);
+    sv("text",{x:ax+42,y:y+12,class:"nsub"},g).textContent=fit(`${a.host==="?"?"host n/a":a.host} · ${a.n} req · ${a.sessions} conv`,tw,6.1);
+    if(a.loops){ sv("rect",{x:ax+cw-40,y:y-17,width:34,height:15,rx:7,class:"badge"},g); sv("text",{x:ax+cw-23,y:y-6,"text-anchor":"middle",class:"badgetxt"},g).textContent="⟳ "+a.loops; }
+    sv("title",{},g).textContent=`${m.name} on ${a.host}\n${a.n} requests · ${a.sessions} conversations${a.loops?` · ${a.loops} loop detections`:""}${a.ua?"\nUA: "+a.ua:""}`;
+  });
+  // endpoints
+  ENDPOINTS.forEach(([e,kind],i)=>{
+    if(i===NLOCAL) sv("text",{x:ex+2,y:eY(i)-26,class:"glabel"},gN).textContent="OmniRoute";
+    const y=eY(i), st=win.endpoints[e]||{n:0,last:0}, c=epColor(e), t=e.split("/")[1];
+    const busy = kind==="local" && (tierState(t)===S.GENERATING||tierState(t)===S.PREFILL), live=busy||now-st.last<20;
+    if(st.n){
+      const off=(i-(ENDPOINTS.length-1)/2)*Math.min(8,hr*1.2/ENDPOINTS.length);
+      const pth=sv("path",{d:curve(hx+hr*.92, hy+off, ex, y),class:"link "+(live?"live":now-st.last>300?"idle":""),stroke:grad("ge"+i,"#ff3b2f",c),"stroke-width":width(st.n,maxE)},gL);
+      flowPaths["e:"+e]=pth;
+    } else flowPaths["e:"+e]=sv("path",{d:curve(hx+hr*.92, hy, ex, y),fill:"none",stroke:"none"},gL);
+    const g=sv("g",{},gN), dim=!st.n && !(kind==="local" && tierState(t)>=S.IDLE && tierState(t)<S.UNREACHABLE);
+    g.setAttribute("opacity",dim?".45":"1");
+    sv("rect",{x:ex,y:y-18,width:cw,height:36,rx:6,class:"card"+(live?" hot":""),stroke:live?c:"#2a3138"},g);
+    sv("rect",{x:ex+cw-3,y:y-18,width:3,height:36,rx:1.5,fill:c},g);
+    icon(g,kind==="cloud"?"cloud":"chip",ex+9,y-11,22,c);
+    sv("text",{x:ex+40,y:y-2,class:"nlabel"},g).textContent=fit(t+(kind==="cloud"?" · combo":" · local"),cw-50,8.4);
+    const oc = ((p.omniroute||{}).combos||{})[t];
+    const stTxt = kind==="local" ? ({0:"unloaded",1:"loading",2:"idle",3:"prefill",4:"generating",5:"down"}[tierState(t)])
+      : oc ? `${oc.combo}${oc.models&&oc.models[0]?" · "+shortModel(oc.models[0].model):""}${oc.requests?" · "+Math.round(100*oc.ok/oc.requests)+"% ok":""}` : "combo ?";
+    const sub=sv("text",{x:ex+40,y:y+12,class:"nsub"},g); sub.textContent=fit(`${st.n} req · ${stTxt}`,cw-50,6.1);
+    sv("title",{},g).textContent=`${e}\n${st.n} requests in window · ${stTxt}`;
+  });
+  // hub
+  const gh=sv("g",{},gN), clip=sv("clipPath",{id:"hubclip"},defs); sv("circle",{cx:hx,cy:hy,r:hr-5},clip);
+  sv("circle",{cx:hx,cy:hy,r:hr+10,fill:"#ff3b2f",opacity:".07"},gh);
+  sv("circle",{cx:hx,cy:hy,r:hr,fill:"#0d0f12",stroke:"#2f373f"},gh);
+  sv("image",{href:"/ultron-img",x:hx-hr+5,y:hy-hr+5,width:2*(hr-5),height:2*(hr-5),"clip-path":"url(#hubclip)",preserveAspectRatio:"xMidYMid slice"},gh);
+  const ring=sv("circle",{cx:hx,cy:hy,r:hr,class:"ring"+(now-Math.max(0,...agents.map(a=>a.last))<20?" pulse":"")},gh);
+  sv("text",{x:hx,y:hy+hr+18,"text-anchor":"middle",class:"nlabel"},gh).textContent=WANDA_NAME;
+  const md=k=>((p.routing.modes||[]).find(m=>m.key===k)||{}).value;
+  sv("text",{x:hx,y:hy+hr+32,"text-anchor":"middle",class:"nsub"},gh).textContent=`LiteLLM :4000 · route ${md("route")} · admit ${md("admit")}`;
+  $("flowsum").textContent=`${win.total} req · ${agents.length} agents · `;
+}
+function spawnParticle(ev){ particles.push({ev, t0:performance.now()}); if(particles.length>60) particles.shift(); }
+function animateParticles(ts){
+  const svg=$("flow"); let layer=svg.querySelector("#plyr"); if(!layer){ layer=sv("g",{id:"plyr"},svg); }
+  layer.replaceChildren(); const DUR=1800;
+  particles=particles.filter(p=>ts-p.t0<DUR);
+  for(const p of particles){
+    const a=flowPaths["a:"+p.ev.agent], e=flowPaths["e:"+p.ev.endpoint]; if(!a||!e) continue;
+    const f=(ts-p.t0)/DUR, seg=f<.5?a:e, u=f<.5?f*2:(f-.5)*2;
+    try{ const L=seg.getTotalLength(), pt=seg.getPointAtLength(u*L);
+      const c=f<.5?(agentMeta(p.ev.agent).color):epColor(p.ev.endpoint);
+      sv("circle",{cx:pt.x,cy:pt.y,r:3.6,fill:c,opacity:String(1-Math.abs(.5-f)*.6)},layer);
+      sv("circle",{cx:pt.x,cy:pt.y,r:8,fill:c,opacity:".18"},layer); }catch(_){}
+  }
+  requestAnimationFrame(animateParticles);
+}
+
+/* ---- routing: modes, stats, recent decisions -------------------------------------------
+   Mode buttons are built once and repainted, so an armed "press again" survives the ticks. */
+const modeBtns={};          // key -> {src, btns:{value:button}, warn}  (routing section; panel "lora" -> LoRA section)
+const WARNISH = {"cloud-only":1, "local-only":1, "off":1, "shadow":1};
+const CLOUD="#5e81ac";
+const flagCards={};   // key -> {src, btns:{true:button,false:button}}
+function buildFlagCards(flags){
+  for(const f of flags){
+    const box=el("div","mode"); const h=el("div","mh"); h.append(el("span","mn",f.label)); const src=el("span","src"); h.append(src);
+    const seg=el("div","seg"); const yes=el("button",null,"allowed"), no=el("button",null,"blocked");
+    yes.onclick=()=>{ if(!yes.classList.contains("cur")) confirmPress(yes,()=>setFlag(f.key,true)); };
+    no.onclick=()=>{ if(!no.classList.contains("cur")) confirmPress(no,()=>setFlag(f.key,false)); };
+    seg.append(yes,no); box.append(h,seg,el("div","mhelp",f.help));
+    $("modes").prepend(box); flagCards[f.key]={src,yes,no};
+  }
+}
+function paintFlagCards(flags){
+  for(const f of flags){ const k=flagCards[f.key]; if(!k) continue;
+    k.src.textContent = f.raw==null ? "flag file missing" : (f.last ? f.last.replace(/^(\S+)T(\S+?)(\.\d+)?Z\s*/,"$1 $2Z · ") : "");
+    if(armed!==k.yes){ k.yes.classList.toggle("cur", f.value); k.yes.textContent=(f.value?"● ":"")+"allowed"; }
+    if(armed!==k.no){ const b=!f.value&&f.raw!=null; k.no.classList.toggle("cur", b); k.no.classList.toggle("warnish", b); k.no.textContent=(b?"● ":"")+"blocked"; }
+  }
+}
+function buildModes(modes){
+  for(const m of modes){
+    const box=el("div","mode"); const h=el("div","mh"); h.append(el("span","mn",m.label)); const src=el("span","src"); h.append(src);
+    const seg=el("div","seg"); const btns={};
+    for(const o of m.options){ const b=el("button",null,o); b.onclick=()=>{ if(!b.classList.contains("cur")) confirmPress(b,()=>setMode(m.key,o)); }; seg.appendChild(b); btns[o]=b; }
+    const help=el("div","mhelp",m.help);
+    box.append(h,seg,help); $(m.panel==="lora"?"loramodes":"modes").appendChild(box);
+    modeBtns[m.key]={src,btns,warn:m.warn?Object.fromEntries(m.warn.map(o=>[o,1])):WARNISH};
+  }
+}
+function paintSeg(btns, value, warn=WARNISH){
+  for(const [o,b] of Object.entries(btns)){ if(armed===b) continue;
+    b.classList.toggle("cur", o===value); b.classList.toggle("warnish", o===value && !!warn[o]); b.textContent=(o===value?"● ":"")+o; }
+}
+async function setMode(key,value){
+  try{ await api("/api/mode",{key,value}); toast(`${key} → ${value} (applies to the next request)`, true); }
+  catch(e){ toast(`${key} not changed — ${e.message}`); }
+}
+function tile(k, v, d, split){
+  const t=el("div","tile"); t.appendChild(el("div","k",k)); const vv=el("div","v"); vv.innerHTML=v; t.appendChild(vv);
+  if(d) t.appendChild(el("div","d",d));
+  if(split){ const s=el("div","split"); for(const [w,c] of split){ if(!w) continue; const i=el("i"); i.style.flex=String(w); i.style.background=c; s.appendChild(i);} t.appendChild(s); }
+  return t;
+}
+const tierOf = target => String(target||"").split("/")[1];
+const colorOf = target => String(target||"").startsWith("cloud/") ? CLOUD : (TC[tierOf(target)]||"#888");
+function fmtTargets(by){ return Object.entries(by||{}).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`${t} ${n}`).join(" · ") || "none"; }
+let rKey="";
+function renderRouting(r){
+  if(!r) return;
+  if(!Object.keys(modeBtns).length && r.modes) buildModes(r.modes);
+  for(const m of r.modes||[]){ const k=modeBtns[m.key]; if(!k) continue; paintSeg(k.btns, m.value, k.warn);
+    k.src.textContent = m.source==="panel" ? "live · ~/.ultron" : m.source==="env" ? "from ~/.litellm/env" : "default"; }
+  if(r.error){ $("rstats").replaceChildren(el("div","quiet","routing stats unavailable — "+r.error)); return; }
+  const md=r.media||{}, rs=r.rescue||{}, mv=k=>((r.modes||[]).find(m=>m.key===k)||{}).value||"?";
+  const key=JSON.stringify([r.h1,r.d1,r.pins,r.loops_24h,r.new_h1,r.errors_24h,(r.recent[0]||{}).t,(r.recent_loops[0]||{}).t,
+    md.hits,md.video_done,md.video_failed,((md.recent||[])[0]||{}).t,rs.total,mv("media"),mv("rescue")]);
+  if(key===rKey) return; rKey=key;
+  const h=r.h1, d=r.d1, lp=r.loops_24h, pm=r.pins||{};
+  const pinTxt = b => fmtTargets(b);
+  const mainN=Object.values(pm.main||{}).reduce((a,b)=>a+b,0), subN=Object.values(pm.sub||{}).reduce((a,b)=>a+b,0);
+  const frag=document.createDocumentFragment();
+  frag.append(
+    tile("Requests · last hour", `${f0(h.total)} <small>${h.total?Math.round(100*h.cloud/h.total):0}% cloud</small>`,
+         `local ${f0(h.local)} · cloud ${f0(h.cloud)} · ${fmtTargets(h.by_target)}`,
+         Object.entries(h.by_target).map(([t,n])=>[n,colorOf(t)])),
+    tile("New conversations · last hour", `${f0(r.new_h1)}`,
+         Object.entries(r.rules_h1||{}).map(([k,n])=>`${k} ${n}`).join(" · ") || "none"),
+    tile(`Active pins · ${pm.mode||"?"}`, `${mainN} <small>main</small> ${subN} <small>sub</small>`,
+         pm.error ? "pins db: "+pm.error : `main: ${pinTxt(pm.main)} | sub: ${pinTxt(pm.sub)}`),
+    tile("Requests · 24 h", `${f0(d.total)} <small>${d.total?Math.round(100*d.cloud/d.total):0}% cloud</small>`,
+         `${fmtTargets(d.by_target)}${r.errors_24h?` · ${r.errors_24h} hook errors`:""}`,
+         Object.entries(d.by_target).map(([t,n])=>[n,colorOf(t)])),
+    tile("Loops · 24 h", `${f0(lp.stop)} <small>stopped</small> ${f0(lp.force)} <small>forced</small>`,
+         `${f0(lp.warn)} warned${lp.shadow?` · ${f0(lp.shadow)} shadow-only (logged, not acted on)`:""} · mode ${mv("loops")}`,
+         [[lp.warn,"#f0a92b88"],[lp.force,"#f0a92b"],[lp.stop,"#ff4d4d"],[lp.shadow,"#565f68"]]),
+    tile(`Media · 24 h · ${mv("media")}`, `${f0(md.hits)} <small>matched</small> ${f0(md.applied)} <small>sent</small>`,
+         `${Object.entries(md.kinds||{}).map(([k,n])=>`${k} ${n}`).join(" · ")||"no prompts"}`
+         + `${md.would?` · ${md.would} shadow-only`:""}${md.helper_no?` · helper said no ${md.helper_no}`:""}`
+         + `${md.video_done||md.video_failed?` · video ${md.video_done} done / ${md.video_failed} failed`:""}${md.errors?` · ${md.errors} errors`:""}`,
+         [[md.applied,CLOUD],[md.would,"#f0a92b88"],[md.helper_no,"#565f68"],[md.video_failed,"#ff4d4d"]]),
+    tile(`Rescues · 24 h · ${mv("rescue")}`, `${f0(rs.total)} <small>text → tool call</small>`,
+         `${Object.entries(rs.tools||{}).map(([k,n])=>`${k} ${n}`).join(" · ")||"none"}${rs.total&&rs.applied<rs.total?` · ${rs.total-rs.applied} shadow`:""}`
+         + `${(rs.models||[]).length?" · "+rs.models.join(", "):""}${rs.errors?` · ${rs.errors} errors`:""}`),
+  );
+  $("rstats").replaceChildren(frag);
+
+  const rf=document.createDocumentFragment();
+  for(const x of (r.recent||[]).slice().reverse()){
+    const row=el("div","rrow"+(String(x.target).startsWith("cloud/")?" cloud":"")); row.appendChild(el("span","tm",hhmmss(x.t)));
+    const tx=el("span","mt"); const b=el("b",null,x.target); b.style.color=colorOf(x.target);
+    tx.append(document.createTextNode(`${x.requested} → `), b, document.createTextNode(` · ${x.rule} · ${x.who}`));
+    if(!x.applied) tx.appendChild(el("span","tag2","shadow"));
+    row.appendChild(tx); rf.appendChild(row);
+  }
+  fillLog("rrecent", rf.childNodes.length ? rf : el("div","quiet","no new conversations in 24 h"));
+
+  const lf=document.createDocumentFragment();
+  for(const x of (r.recent_loops||[]).slice().reverse()){
+    const row=el("div","rrow "+x.level); row.appendChild(el("span","tm",hhmmss(x.t)));
+    const tx=el("span","mt"); tx.append(el("b",null,String(x.level).toUpperCase()),
+      document.createTextNode(` ${(x.tools||[]).join(",")} ×${x.run} · ${x.rule} · ${x.model||""} · ${x.who}`));
+    if(x.mode!=="enforce") tx.appendChild(el("span","tag2",x.mode));
+    row.appendChild(tx); lf.appendChild(row);
+  }
+  fillLog("rloops", lf.childNodes.length ? lf : el("div","quiet","no loops detected in 24 h"));
+
+  const mf=document.createDocumentFragment();
+  for(const x of (md.recent||[]).slice().reverse()){
+    const bad = x.error || x.event==="video_failed";
+    const row=el("div","rrow"+(bad?" err":x.applied||x.event==="video_done"?" ok":"")); row.appendChild(el("span","tm",hhmmss(x.t)));
+    const tx=el("span","mt");
+    if(x.event){
+      tx.append(el("b",null,x.event==="video_done"?"VIDEO DONE":"VIDEO FAILED"), document.createTextNode(` job ${x.job||"?"}${x.model?" · "+x.model:""}${x.error?" · "+x.error:""}`));
+    } else {
+      tx.append(el("b",null,x.kind), document.createTextNode(` “${x.text}” · ${x.agent?"agent":"chat"} · ${x.who}`));
+      if(x.applied && x.file){ const a=el("a",null," "+x.file); a.href="/media/"+encodeURIComponent(x.file); a.target="_blank"; a.style.color=CLOUD; tx.append(document.createTextNode(" ·"), a); }
+      if(x.model) tx.append(document.createTextNode(" · "+x.model));
+      if(x.error) tx.append(document.createTextNode(" · "+x.error));
+      const tag = x.applied ? null : x.skipped ? (x.skipped==="helper said no"?"helper: no":x.skipped) : x.deduped ? "dedup" : x.mode;
+      if(tag) tx.appendChild(el("span","tag2",tag));
+    }
+    row.appendChild(tx); mf.appendChild(row);
+  }
+  fillLog("rmedia", mf.childNodes.length ? mf : el("div","quiet",`no media prompts in 24 h · mode ${mv("media")}`));
+}
+
+/* ---- LoRA: traces captured by ultron_admit, runs + packs from ~/lora --------------------- */
+let lKey="";
+const ago = t => t ? dur(Date.now()/1000-t)+" ago" : "–";
+const esc = x => String(x??"").replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);   // run/pack names go into tile() innerHTML
+const f3 = x => x==null ? "–" : x.toFixed(3);
+const STAGE = {make_dataset:"sampling", train:"training", valloss:"held-out loss", eval:"repeat-rate eval", fuse_pack:"fusing pack"};
+function renderLora(l){
+  if(!l) return;
+  if(l.error){ $("lstats").replaceChildren(el("div","quiet","LoRA stats unavailable — "+l.error)); return; }
+  const key=JSON.stringify([l.traces,l.trace_newest,l.runs,l.packs,l.serving,l.active]);
+  if(key===lKey) return; lKey=key;
+  const tr=l.traces||{}, nTr=Object.values(tr).reduce((a,b)=>a+b,0), a=l.active, srv=Object.entries(l.serving||{});
+  $("lstats").replaceChildren(
+    tile("Traces", `${f0(nTr)} <small>${gb(l.trace_bytes)}</small>`,
+         `${TIERS.concat(["imported","other"]).filter(t=>tr[t]).map(t=>`${t} ${tr[t]}`).join(" · ")||"none"} · newest ${ago(l.trace_newest)}`,
+         TIERS.map(t=>[tr[t]||0,TC[t]]).concat([[(tr.imported||0)+(tr.other||0),"#565f68"]])),
+    tile("Now", a ? `${STAGE[a.stage]||a.stage} <small>${esc(a.name)}</small>` : `idle`,
+         a ? `${a.step!=null?`step ${a.step}/${a.of} · `:""}running ${a.etime}` : "no run.sh stage running",
+         a && a.step!=null ? [[a.step,"var(--green)"],[Math.max(0,a.of-a.step),"#242a30"]] : null),
+    tile("Serving", srv.length ? srv.map(([t,p])=>`${esc(t)} <small>${esc(p)}</small>`).join(" ") : `base <small>models</small>`,
+         srv.length ? "tier MODEL= points into ~/lora/packs" : "no tier serves a LoRA pack · see lora/README.md to deploy one"),
+  );
+  const tb=el("table","ltab"), hd=el("tr");
+  for(const h of ["run","tier","ckpts","val loss base → best","repeat base → adapter","updated"]) hd.appendChild(el("th",null,h));
+  tb.appendChild(hd);
+  for(const r of l.runs||[]){
+    const row=el("tr", a&&a.name===r.name?"live":null), td=(t,c)=>{ const x=el("td",c,t); row.appendChild(x); return x; };
+    const n=td(null); n.appendChild(el("b",null,r.name)); if(r.of_run) n.appendChild(el("span","tag2",`${r.of_run} @ ${r.of_step}`));
+    const tc=td(r.tier||"?"); if(TC[r.tier]) tc.style.color=TC[r.tier];
+    td(r.ckpts?`${r.ckpts}${r.iters?` / ${r.iters} it`:""}`:"–");
+    td(r.val_base!=null?`${f3(r.val_base)} → ${f3(r.val_best)} @${r.val_best_step}`:"–", r.val_best!=null&&r.val_base!=null?(r.val_best<r.val_base?"good":"bad"):null);
+    const eb=r.eval_base, ea=r.eval_adapter;
+    td(eb&&ea?`${eb.repeat.toFixed(3)} → ${ea.repeat.toFixed(3)} (n ${ea.samples})`:"–", eb&&ea?(ea.repeat<eb.repeat?"good":ea.repeat>eb.repeat?"bad":null):null);
+    td(ago(r.t));
+    tb.appendChild(row);
+  }
+  fillLog("lruns", (l.runs||[]).length ? tb : el("div","quiet","no runs yet · lora/run.sh starts one"));
+  const pf=document.createDocumentFragment();
+  for(const pk of (l.packs||[]).slice().reverse()){
+    const inUse=srv.filter(([t,p])=>p===pk.name).map(([t])=>t);
+    const row=el("div","rrow"+(inUse.length?" ok":"")); row.appendChild(el("span","tm",ago(pk.t).replace(" ago","")));
+    const tx=el("span","mt"); tx.append(el("b",null,pk.name), document.createTextNode(` · ${gb(pk.bytes)}`));
+    tx.appendChild(el("span","tag2",inUse.length?"serving: "+inUse.join(","):"not deployed"));
+    row.appendChild(tx); pf.appendChild(row);
+  }
+  fillLog("lpacks", pf.childNodes.length ? pf : el("div","quiet","no packs yet · lora/fuse_pack.py builds one"));
+}
+
+/* ---- bottom summary strip: compact gauges, read-only; click jumps to the section -------- */
+const bar=$("bar"), G={};
+function measureBar(){ document.documentElement.style.setProperty("--bar-h", bar.offsetHeight+"px"); }
+if(window.ResizeObserver) new ResizeObserver(measureBar).observe(bar);
+window.addEventListener("resize", measureBar);
+function ring(frac, color){ const r=7, c=2*Math.PI*r, f=Math.max(0,Math.min(1,frac||0));
+  return `<svg width="18" height="18" viewBox="0 0 18 18"><circle cx="9" cy="9" r="${r}" fill="none" stroke="#242a30" stroke-width="2.6"/>`
+    + `<circle cx="9" cy="9" r="${r}" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="${(c*f).toFixed(2)} ${c.toFixed(2)}" transform="rotate(-90 9 9)"/></svg>`; }
+const mini = (name,color,sz=16) => `<svg width="${sz}" height="${sz}" viewBox="0 0 24 24" style="color:${color}">${ICON[name]}</svg>`;
+const SHIELD='<path d="M12 2.8l7.5 3v5.6c0 4.6-3.2 8.3-7.5 9.8-4.3-1.5-7.5-5.2-7.5-9.8V5.8z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>';
+const LOOP='<path d="M5 12a7 7 0 0 1 12-5l2 2M19 12a7 7 0 0 1-12 5l-2-2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><path d="M19 4v5h-5M5 20v-5h5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>';
+const HOUSE='<path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>';
+const SPLIT='<path d="M4 12h6l4-6h6M10 12l4 6h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>';
+ICON.shield=SHIELD; ICON.loop=LOOP; ICON.house=HOUSE; ICON.split=SPLIT;
+function buildBar(){
+  const items=[["litellm","#lamps"],["sep"],["mem","#lamps"],["swap","#lamps"],["gpu","#lamps"],["sep"],["tiers","#tiers"],["tok","#tracebox"],["sep"],
+    ["traffic","#flowbox"],["route","#modes"],["hooks","#modes"],["loops","#rloops"],["omni","#ocombos"],["lora","#lorasec"]];
+  for(const [k,target] of items){
+    if(k==="sep"){ bar.appendChild(el("span","sep")); continue; }
+    const g=el("div","g"); g.onclick=()=>{ const t=document.querySelector(target); if(t) t.scrollIntoView({behavior:"smooth",block:"center"}); };
+    bar.appendChild(g); G[k]=g;
+  }
+  measureBar();
+}
+function paintBar(p){
+  const m=p.machine||{}, ll=p.litellm, r=p.routing||{}, o=p.omniroute||{}, cls=(ok,warn)=>ok?"ok":warn?"warn":"bad";
+  const set=(k,html,title)=>{ if(G[k]){ G[k].innerHTML=html; if(title) G[k].title=title; } };
+  set("litellm", `${mini("split", ll&&ll.ok?"var(--green)":"var(--red)")}<span class="lbl">LiteLLM</span><b class="${ll&&ll.ok?"ok":"bad"}">${ll?(ll.ok?ll.ms+"ms":"down"):"…"}</b>`,
+      "LiteLLM :4000 liveness");
+  const memUsed = m.mem_total ? 1-(m.mem_available||0)/m.mem_total : 0, pr=m.pressure||1;
+  set("mem", `${ring(memUsed, pr>=4?"var(--red)":pr>=2?"var(--amber)":"var(--green)")}<span class="lbl">Mem</span><b>${gb(m.mem_available)}</b>`,
+      `memory: ${gb(m.mem_available)} free of ${gb(m.mem_total)} · pressure ${({1:"normal",2:"warn",4:"critical"})[pr]||pr}`);
+  const sw = m.swap_total ? m.swap_used/m.swap_total : 0;
+  set("swap", `${ring(sw, sw>.85?"var(--amber)":"#5e81ac")}<span class="lbl">Swap</span><b>${gb(m.swap_used)}</b>`, `swap ${gb(m.swap_used)} of ${gb(m.swap_total)}`);
+  set("gpu", `${ring((m.gpu_util||0)/100, "#c39bd3")}<span class="lbl">GPU</span><b>${m.gpu_util==null?"–":m.gpu_util+"%"}</b>`, `GPU ${m.gpu_util}% busy · ${gb(m.gpu_mem)} in use`);
+  const dots=TIERS.map(t=>{ const d=p.tiers[t]||{}, st=d.state; const on=st>=S.IDLE&&st<S.UNREACHABLE;
+    return `<i class="${on?"on":""} ${st===S.GENERATING||st===S.PREFILL?"gen":""}" style="color:${TC[t]};background:${on?TC[t]:st===S.LOADING?"var(--amber)":st===S.UNREACHABLE?"var(--red)":"#2a3138"}" title="${t}: ${d.state_name||"?"}"></i>`; }).join("");
+  set("tiers", `<span class="lbl">Tiers</span><span class="dots">${dots}</span>`, TIERS.map(t=>`${t}: ${(p.tiers[t]||{}).state_name||"?"}`).join(" · "));
+  let tok=0, busy=[]; for(const t of TIERS){ const d=p.tiers[t], f=d&&d.snap&&d.snap.inflight&&d.snap.inflight[0];
+    if(f){ busy.push(t); tok+= d.state===S.GENERATING ? (f.decode_tok_s||0) : 0; } }
+  set("tok", `<span class="lbl">Now</span><b class="${busy.length?"ok":""}">${busy.length?f0(tok)+" t/s":"idle"}</b>`, busy.length?`${busy.join("+")} busy`:"no request in flight");
+  const h=r.h1||{total:0,local:0,cloud:0};
+  set("traffic", `<span class="lbl">1h</span><span class="mini"><i style="flex:${h.local||0};background:var(--haiku)"></i><i style="flex:${h.cloud||0};background:${CLOUD}"></i></span><b>${f0(h.total)}</b>${h.cloud?`<span>${Math.round(100*h.cloud/Math.max(1,h.total))}% ☁</span>`:""}`,
+      `last hour: ${h.local} local · ${h.cloud} cloud`);
+  const mv=k=>((r.modes||[]).find(x=>x.key===k)||{}).value;
+  const route=mv("route")||"?", ric=route==="cloud-only"?"cloud":route==="local-only"?"house":"split";
+  set("route", `${mini(ric, route==="auto"?"var(--green)":"var(--amber)")}<span class="lbl">Route</span><b class="${route==="auto"?"ok":"warn"}">${route}</b>`, "route mode — change it in Controls & routing");
+  const adm=mv("admit")||"?", lb=mv("loops")||"?", med=mv("media")||"?", hc=x=>x==="enforce"?"ok":x==="shadow"?"warn":"bad";
+  set("hooks", `${mini("shield", adm==="enforce"&&lb==="enforce"?"var(--green)":"var(--amber)")}<span>adm</span><b class="${hc(adm)}">${adm}</b><span>loop</span><b class="${hc(lb)}">${lb}</b><span>media</span><b class="${hc(med)}">${med}</b>`,
+      `LiteLLM hooks: admission ${adm} · loop breaker ${lb} · media ${med} · rescue ${mv("rescue")||"?"}`);
+  const lp=r.loops_24h||{};
+  set("loops", `${mini("loop", lp.stop?"var(--red)":lp.force||lp.warn?"var(--amber)":"#565f68")}<span class="lbl">Loops 24h</span><b class="${lp.stop?"bad":lp.force||lp.warn?"warn":""}">${f0((lp.warn||0)+(lp.force||0)+(lp.stop||0))}</b>`,
+      `loop breaker 24h: ${lp.warn||0} warned · ${lp.force||0} forced · ${lp.stop||0} stopped · ${lp.shadow||0} shadow-only`);
+  const cs=Object.values(o.combos||{}), req=cs.reduce((a,c)=>a+(c.requests||0),0), ok=cs.reduce((a,c)=>a+(c.ok||0),0), fb=cs.reduce((a,c)=>a+(c.fallbacks||0),0);
+  const rate=req?Math.round(100*ok/req):null;
+  if(o.disabled){ set("omni", `${mini("cloud","#565f68")}<span class="lbl">Cloud</span><b>off</b>`, "cloud overflow not configured"); return; }
+  set("omni", `${mini("cloud", o.error?"var(--red)":CLOUD)}<span class="lbl">OmniRoute</span><b class="${o.error?"bad":rate==null?"":cls(rate>=95,rate>=80)}">${o.error?"error":rate==null?"–":rate+"%"}</b>${fb?`<span>${fb} fb</span>`:""}`,
+      o.error ? "OmniRoute: "+o.error : `overflow combos: ${req} requests · ${rate??"–"}% ok · ${fb} fallbacks`);
+  const lo=p.lora||{}, la=lo.active, trc=mv("trace");
+  set("lora", `<span class="lbl">LoRA</span><b class="${la?"ok":""}">${la?(STAGE[la.stage]||la.stage)+(la.step!=null?` ${la.step}/${la.of}`:""):"idle"}</b><span>trace</span><b class="${trc==="on"?"ok":""}">${trc||"?"}</b>`,
+      la ? `LoRA ${la.name||""}: ${STAGE[la.stage]||la.stage}, running ${la.etime}` : `LoRA: no run · trace capture ${trc} · ${Object.keys(lo.serving||{}).length?"serving a pack":"no tier serves a pack"}`);
+}
+async function setFlag(key,value){
+  try{ await api("/api/flag",{key,value}); toast(`${key} set ${value}`, true); }
+  catch(e){ toast(`${key} not changed — ${e.message}`); }
+}
+
+/* ---- main loop ------------------------------------------------------------------------- */
+let last=null, barBuilt=false, flagsBuilt=false, lastTickAt=0;
+function render(p){
+  if(!p || !p.tiers) return;   // Wanda just restarted: the first sample isn't in yet
+  last=p; lastTickAt=Date.now();
+  if(p.tier_colors){ TIERS=Object.keys(p.tier_colors); Object.assign(TC, p.tier_colors); }
+  if(!barBuilt){ buildBar(); barBuilt=true; }
+  if(!flagsBuilt && p.flags && Object.keys(modeBtns).length){ buildFlagCards(p.flags); flagsBuilt=true; }
+  pushHist(p); pushDone(p.requests, p.ts);
+  const L=lamps(p);
+  for(const t of TIERS) if(p.tiers[t]) renderTier(t, p.tiers[t], p.ts);
+  drawTrace(p.ts); renderFeed(p); renderServices(p.services); renderRouting(p.routing); paintFlagCards(p.flags||[]); renderFlow(p); renderOmni(p.omniroute); renderModels(p.llm); renderLora(p.lora); paintBar(p);
+  const worst = L.some(l=>l.s==="red") ? "red" : L.some(l=>l.s==="amber") ? "amber" : "green";
+  $("overall").className="overall "+worst;
+  const gen = TIERS.filter(t=>p.tiers[t]&&p.tiers[t].state>=S.PREFILL&&p.tiers[t].state<S.UNREACHABLE);
+  $("clock").textContent = hhmmss(p.ts)+"  ·  live"+(gen.length?"  ·  "+gen.join("+")+" busy":"");
+}
+
+async function start(){
+  try{
+    const h=await api("/api/history");
+    for(const t of Object.keys(h.history||{})) hist[t]=h.history[t].filter(s=>s[0]>=h.ts-WINDOW_S);
+    pushDone(h.requests, h.ts);
+    render(await api("/api/status"));
+  }catch(e){ toast("initial load failed — "+e.message); }
+  const es=new EventSource("/api/stream");
+  es.addEventListener("tick", ev=>{ try{ render(JSON.parse(ev.data)); }catch(e){ console.error(e); } });
+  es.onerror=()=>{ $("overall").className="overall red"; $("clock").textContent="stream lost — reconnecting…"; };
+  setInterval(()=>{ if(Date.now()-lastTickAt>5000){ $("overall").className="overall red";
+    $("clock").textContent="no data for "+Math.round((Date.now()-lastTickAt)/1000)+"s"; } }, 2000);
+  window.addEventListener("resize", ()=>{ if(last) drawTrace(last.ts); });
+}
+buildTabs();
+buildWinSel();
+buildModelWin();
+$("unloadall").onclick=()=>confirmPress($("unloadall"), async ()=>{ for(const t of TIERS){ try{ await api("/api/tier",{tier:t,action:"unload"}); }catch(e){ toast(t+": "+e.message); } } toast("unload requested for all tiers", true); });
+requestAnimationFrame(animateParticles);
+setInterval(()=>refreshLog(logEpoch,false), 5000);
+start();
+</script>
+</body>
+</html>

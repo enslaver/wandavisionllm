@@ -1,0 +1,47 @@
+# LiteLLM: one OpenAI- and Anthropic-compatible endpoint for every client.
+# Client model id -> local tier (llama-swap) or cloud overflow -> model server.
+#
+# The tier entries (local tiers, their Claude-style ids, cloud overflow, fallbacks, bare-name
+# aliases) are generated from tiers.conf by deploy.py: edit tiers.conf, not the generated lines.
+# Swap the model a tier runs in its script (mtplx/bin/tier-*.sh); this file does not change.
+# Live tier status: the Wanda panel.
+model_list:
+  # __TIERS_MODEL_LIST__
+  # --- media (optional): /v1/images, /v1/embeddings on the cloud endpoint (OMNIROUTE_BASE).
+  # Chat prompts that ask for media are caught by ultron_media.py (it calls the endpoint itself,
+  # models in ~/.ultron/media.json); these entries serve clients that call the endpoints directly.
+  # The model ids are examples in OpenAI's naming: use whatever ids your endpoint serves.
+  - model_name: "media/image"
+    litellm_params:
+      model: "openai/gpt-image-1"
+      api_base: "os.environ/OMNIROUTE_BASE"   # ~/.litellm/env
+      api_key: "os.environ/OMNIROUTE_KEY"     # ~/.litellm/env
+    model_info: {mode: image_generation, description: "text -> image (cloud)"}
+  - model_name: "media/image-edit"
+    litellm_params:
+      model: "openai/gpt-image-1"
+      api_base: "os.environ/OMNIROUTE_BASE"
+      api_key: "os.environ/OMNIROUTE_KEY"
+    model_info: {mode: image_edit, description: "image + prompt -> image (cloud)"}
+  - model_name: "media/embed"
+    litellm_params:
+      model: "openai/text-embedding-3-small"
+      api_base: "os.environ/OMNIROUTE_BASE"
+      api_key: "os.environ/OMNIROUTE_KEY"
+    model_info: {mode: embedding, description: "text -> vector, 1536 dims (cloud)"}
+router_settings:
+  # __TIERS_FALLBACKS__
+  enable_pre_call_checks: true   # max_input_tokens backstop (each tier's context in tiers.conf): over it -> ContextWindowExceeded
+  # __TIERS_RETRY_POLICY__
+  # __TIERS_ALIASES__
+litellm_settings:
+  callbacks:   # order matters: loop breaker edits the request, admission picks the target
+    - ultron_stats.proxy_handler_instance   # first, observe-only
+    - loop_breaker.proxy_handler_instance   # repeated tool calls -> note / tools off / stop
+    - ultron_media.proxy_handler_instance   # media prompts -> cloud endpoint (~/.ultron/media-mode: shadow|enforce|off)
+    - ultron_admit.proxy_handler_instance   # local tier vs cloud overflow, per-conversation pins
+    - ultron_rescue.proxy_handler_instance  # local tier wrote a ```bash block instead of a tool call -> tool_use (~/.ultron/rescue-mode)
+    - prometheus                            # stock /metrics; aggregates per model (auth: master key)
+  drop_params: true
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

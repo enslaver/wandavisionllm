@@ -1,0 +1,19 @@
+# Tooling config only: nothing here is installed. Deployed files are Python 3.9, standard library only.
+[project]
+name = "wandavision"
+version = "0.1.0"
+description = "Local-first LLM stack for Apple Silicon Macs: Claude-compatible tiers, agent-safety hooks, and a realtime dashboard."
+requires-python = ">=3.9"
+license = "MIT"
+
+[tool.pytest.ini_options]
+testpaths = ["litellm"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 140
+
+[tool.ruff.lint]
+# Syntax errors, pyflakes (unused/undefined names), and a few bug-prone patterns.
+select = ["E9", "F", "B006", "B008", "PLE"]

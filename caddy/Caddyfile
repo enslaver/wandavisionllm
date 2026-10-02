@@ -1,0 +1,38 @@
+# Single entry point for the stack: Wanda at /, the LLM gateway at /llm/, generated media at /media/.
+# deploy.py fills in __HOSTNAME__ (WANDAVISION_HOSTNAME in wandavision.conf) and __HOME__.
+# Add a service: copy the /llm block below, then add a matching entry to services.json so Wanda
+# shows it (see wanda/services.example.json).
+{
+	auto_https disable_redirects
+}
+
+(services) {
+	# LLM gateway (LiteLLM). Clients can also talk to :4000 directly.
+	redir /llm /llm/
+	handle_path /llm/* {
+		reverse_proxy 127.0.0.1:4000
+	}
+
+	# Generated images/videos (ultron_media.py writes ~/.ultron/media)
+	handle_path /media/* {
+		root * __HOME__/.ultron/media
+		file_server
+	}
+
+	# Wanda (~/wanda, LaunchAgent com.wanda.portal) serves /, /api/* and /icons/*.
+	# Everything not matched by a route above lands here.
+	handle {
+		reverse_proxy 127.0.0.1:8790
+	}
+}
+
+# HTTPS on your hostname. On a Tailscale MagicDNS name (*.ts.net) Caddy fetches the cert from
+# Tailscale; a plain local name gets Caddy's local CA.
+__HOSTNAME__ {
+	import services
+}
+
+# LAN: http://<this-mac>.local or its IP
+http://:80 {
+	import services
+}

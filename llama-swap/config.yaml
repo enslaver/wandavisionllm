@@ -1,0 +1,17 @@
+# llama-swap: starts each tier on first request, stops it after `ttl` idle seconds.
+# Front: LiteLLM (0.0.0.0:4000) -> here (127.0.0.1:8001) -> one model server per tier on 18001+.
+#
+# The tier parts (models, preload, the residency matrix) are generated from litellm/tiers.conf by
+# deploy.py: edit that file, not the generated lines. The settings around them are yours.
+healthCheckTimeout: 300   # seconds a tier may take to load; big models from a cold disk need minutes
+logLevel: info
+startPort: 18001
+
+# __TIERS_SWAP_MODELS__
+
+# __TIERS_SWAP_HOOKS__
+
+# The matrix lists which tiers may be resident together (tiers.conf [routing] resident). The
+# LiteLLM admission hook (ultron_admit.py) reads the same sets and sends requests that would need
+# an eviction to the cloud overflow; this matrix is the backstop.
+# __TIERS_SWAP_ROUTING__

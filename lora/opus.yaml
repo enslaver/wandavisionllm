@@ -1,0 +1,43 @@
+# mlx_lm.lora config — QLoRA on the served opus weights (Qwen3.6-35B-A3B MoE, 4-bit g64).
+#   TIER=opus ./run.sh <name> [train.py flags]
+# model: text-only view of the MTPLX pack (symlinks, see README); the MTP head stays as it is.
+# Paths come from the command line: mlx_lm doesn't expand ~ in this file.
+train: true
+fine_tune_type: lora
+
+max_seq_length: 8192          # make_dataset.py prompts are ~6-7k tokens + one turn
+mask_prompt: true             # loss on the chosen turn only (its <think> and tool call)
+
+optimizer: adamw
+batch_size: 1
+grad_accumulation_steps: 4
+iters: 100                    # v0 (sonnet) overfit from its first checkpoint: stop on held-out loss
+learning_rate: 1e-5           # half sonnet's: 35B, and a fused delta lands in every token's path
+seed: 0
+grad_checkpoint: true
+
+num_layers: -1                # all 40 blocks
+lora_parameters:
+  rank: 16
+  dropout: 0.05
+  scale: 20.0
+  # Dense paths only: attention (10 full-attention blocks), linear attention (30 Gated DeltaNet
+  # blocks) and the shared expert every token goes through. Not the 256 routed experts (each token
+  # sees 8; LoRA on them is 256x the adapters and fuse_pack can't fold SwitchLinear) and not the
+  # router (mlp.gate, 8-bit), so routing stays what the pack was verified with.
+  keys:
+    - self_attn.q_proj
+    - self_attn.k_proj
+    - self_attn.v_proj
+    - self_attn.o_proj
+    - linear_attn.in_proj_qkv
+    - linear_attn.in_proj_z
+    - linear_attn.out_proj
+    - mlp.shared_expert.gate_proj
+    - mlp.shared_expert.up_proj
+    - mlp.shared_expert.down_proj
+
+val_batches: -1
+steps_per_eval: 25
+steps_per_report: 5
+save_every: 25

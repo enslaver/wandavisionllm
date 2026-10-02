@@ -1,0 +1,12 @@
+# wandavision.conf — deploy-time settings for deploy.py (copy to wandavision.conf; it is git-ignored).
+# Environment variables with the same names override these. Secrets do NOT go here: they live in
+# ~/.litellm/env on the Mac (see litellm/env.example).
+
+# The name Caddy serves HTTPS on. A Tailscale MagicDNS name (your-mac.tailnet-name.ts.net) gets a real
+# certificate from Tailscale; "localhost" gets Caddy's local CA. Fills __HOSTNAME__ in caddy/Caddyfile.
+WANDAVISION_HOSTNAME=localhost
+
+# Deploying from another machine? The ssh host of the Mac that serves the models, and this repo's path
+# on it (a shared mount or a clone). Leave WANDAVISION_HOST empty to deploy on the machine you run on.
+WANDAVISION_HOST=
+WANDAVISION_REMOTE_ROOT=
