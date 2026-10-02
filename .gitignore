@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# macOS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local settings and anything that can hold secrets
+wandavision.conf
+*.env
+env
+!litellm/env.example
+wandavision-backup/
+*.deploy-tmp
+
+# Claude Code local state
+.claude/settings.local.json
+rendered/

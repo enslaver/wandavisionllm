@@ -1,0 +1,21 @@
+[
+  {
+    "id": "llm",
+    "name": "LLM gateway",
+    "description": "LiteLLM: Anthropic + OpenAI APIs for the local tiers",
+    "path": "/llm/",
+    "upstream": "127.0.0.1:4000",
+    "health": "/llm/health/liveliness",
+    "icon": "llm.svg"
+  },
+  {
+    "id": "comfy",
+    "name": "ComfyUI",
+    "description": "Image and video workflows",
+    "path": "/comfy/",
+    "upstream": "127.0.0.1:8188",
+    "icon": "service.svg",
+    "disabled": true,
+    "note": "example of a disabled entry"
+  }
+]
