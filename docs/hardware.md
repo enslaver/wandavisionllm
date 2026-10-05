@@ -87,7 +87,10 @@ mode `local-only` swaps instead).
 | 64 GB | Qwen3.8-27B 4-bit on TensorFold (~16 GB + drafter) | Qwen3.6-35B-A3B MTPLX | Qwen3.5-9B MTPLX | Qwen3.5-4B MTPLX | `(fable \| opus) & sonnet & haiku` |
 | 128 GB | Qwen3.8-27B 4-bit on TensorFold, full 200k input | Qwen3.6-35B-A3B MTPLX | Qwen3.5-9B MTPLX | Qwen3.5-4B MTPLX | `(fable \| opus) & sonnet & haiku` |
 
-Below 64 GB, delete the `[fable]` section from `tiers.conf`. Per row, beyond the models:
+Below 64 GB, delete the `[fable]` and `[judge]` sections from `tiers.conf`, and let sonnet unload
+(`ttl = 600`, `preload = no`, `evict_cost = 2` in `[sonnet]`). From 64 GB, sonnet and haiku stay
+loaded and the image judge (~5.7 GB, optional) takes the big tier's slot:
+`(fable | opus | judge) & sonnet & haiku`. Per row, beyond the models:
 
 - **16–24 GB:** opus alone, or the two small tiers together. Session-bank caps 2–3 GB, context 64k–128k.
   The 9B pack has a vision tower, so opus gets `vision = yes`. Send heavy work to the cloud.

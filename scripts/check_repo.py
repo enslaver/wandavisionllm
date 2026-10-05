@@ -12,6 +12,7 @@ Needs pyyaml. Exits non-zero on the first failing group, after printing every fa
 """
 
 import ast
+import glob
 import importlib.util
 import json
 import os
@@ -41,8 +42,9 @@ def check_components(deploy):
     for name, c in deploy.COMPONENTS.items():
         src = os.path.join(ROOT, c.get("src", name))
         for f in c.get("files", []):
-            if not os.path.isfile(os.path.join(src, f)):
-                fail(f"{name}: {c.get('src', name)}/{f} is listed in COMPONENTS but missing")
+            rel = f[0] if isinstance(f, tuple) else os.path.join(c.get("src", name), f)
+            if not os.path.isfile(os.path.join(ROOT, rel)):
+                fail(f"{name}: {rel} is listed in COMPONENTS but missing")
         if c.get("tree") and not os.path.isdir(src):
             fail(f"{name}: tree {src} missing")
 
@@ -101,7 +103,10 @@ def check_plists(out):
 
 
 def check_json():
-    for p in ("wanda/services.example.json",):
+    comfy = os.path.join(ROOT, "Vision", "comfyui")
+    workflows = sorted(glob.glob(os.path.join(comfy, "workflows", "*.json")))
+    for p in ["wanda/services.example.json", "Vision/comfyui/nodes.json", "Vision/comfyui/models.json",
+              "lora/recipe-4b-vision.json"] + [os.path.relpath(w, ROOT) for w in workflows]:
         try:
             json.load(open(os.path.join(ROOT, p)))
         except Exception as e:  # noqa: BLE001
@@ -113,10 +118,12 @@ DEPLOYED_PY = {
     "wanda/server.py": set(),
     "litellm/loop_breaker.py": {"litellm"},
     "litellm/ultron_admit.py": {"litellm", "loop_breaker", "yaml", "ultron_tiers"},
-    "litellm/ultron_media.py": {"litellm", "loop_breaker", "ultron_tiers"},
+    "Vision/media/ultron_media.py": {"litellm", "loop_breaker", "ultron_tiers"},
     "litellm/ultron_stats.py": {"litellm", "yaml"},
     "litellm/ultron_rescue.py": {"litellm"},
     "litellm/ultron_tiers.py": set(),
+    "gpu-box/deploy.py": set(),        # deployed on the GPU box
+    "Vision/judge/rank.py": set(),     # a client; runs anywhere
 }
 
 

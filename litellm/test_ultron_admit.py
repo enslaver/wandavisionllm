@@ -44,7 +44,7 @@ def test_tier_globs():
     ("opus", st(opus=(1, 0), haiku=(0, 0)), set(), "", "auto", ("ultron/opus", "1:loaded")),
     ("opus", st(opus="starting", haiku=(0, 0)), set(), "", "auto", ("ultron/opus", "1:loading")),
     # queue full -> no substitute for opus -> cloud
-    ("opus", st(opus=(1, 1), haiku=(0, 0)), set(), "", "auto", ("cloud/opus", "4:overflow:queue")),
+    ("opus", st(opus=(1, 20), haiku=(0, 0)), set(), "", "auto", ("cloud/opus", "4:overflow:queue")),
     # 2. cold load that fits next to haiku
     ("sonnet", st(haiku=(0, 0)), set(), "", "auto", ("ultron/sonnet", "2:cold-fits")),
     # the 2026-09-29 bug: opus unloaded, haiku ready, one idle main pin on sonnet -> opus
@@ -52,6 +52,8 @@ def test_tier_globs():
     ("opus", st(haiku=(0, 0)), {"sonnet"}, "", "auto", ("ultron/opus", "2:cold-fits")),
     # ...but not under memory pressure -> no substitute loaded -> cloud
     ("sonnet", st(pressure=2, haiku=(0, 0)), set(), "", "auto", ("cloud/sonnet", "4:overflow:no-fit")),
+    # ...but kernel pressure "warn" never turns away a tier that is already loaded
+    ("opus", st(pressure=2, opus=(0, 0), haiku=(0, 0)), set(), "", "auto", ("ultron/opus", "1:loaded")),
     # sonnet doesn't fit next to opus -> 3. substitute opus (loaded, idle)
     ("sonnet", st(opus=(0, 0), haiku=(0, 0)), set(), "", "auto", ("ultron/opus", "3:substitute(sonnet->opus)")),
     # a main-thread pin on opus, while opus is unloaded, must not block sonnet's cold load
@@ -60,10 +62,10 @@ def test_tier_globs():
     # in `loaded`, so sonnet still fits next to it
     ("sonnet", st(haiku=(0, 0)), {"haiku"}, "", "auto", ("ultron/sonnet", "2:cold-fits")),
     # haiku queue full -> substitute sonnet
-    ("haiku", st(haiku=(1, 3), sonnet=(0, 0)), set(), "", "auto", ("ultron/sonnet", "3:substitute(haiku->sonnet)")),
+    ("haiku", st(haiku=(1, 50), sonnet=(0, 0)), set(), "", "auto", ("ultron/sonnet", "3:substitute(haiku->sonnet)")),
     # 5. private caller never goes to cloud
-    ("opus", st(opus=(1, 1), haiku=(0, 0)), set(), "private", "auto", ("ultron/opus", "5:local-swap")),
-    ("sonnet", st(opus=(1, 1), haiku=(0, 0)), set(), "", "local-only", ("ultron/sonnet", "5:local-swap")),
+    ("opus", st(opus=(1, 20), haiku=(0, 0)), set(), "private", "auto", ("ultron/opus", "5:local-swap")),
+    ("sonnet", st(opus=(1, 20), haiku=(0, 0)), set(), "", "local-only", ("ultron/sonnet", "5:local-swap")),
     # overrides
     ("haiku", st(haiku=(0, 0)), set(), "cloud", "auto", ("cloud/haiku", "x-route:cloud")),
     ("haiku", st(haiku=(0, 0)), set(), "", "cloud-only", ("cloud/haiku", "route-mode:cloud-only")),
@@ -103,7 +105,7 @@ def adm(tmp_path, monkeypatch):
     monkeypatch.setattr(ua, "ROUTE_MODE_FILE", str(tmp_path / "route-mode"))
     monkeypatch.setattr(ua, "matrix", lambda: (SETS, {"opus": 3, "sonnet": 2, "haiku": 5}))
     a = ua.Admission()
-    a.fake = st(opus=(1, 1), haiku=(0, 0))
+    a.fake = st(opus=(1, 20), haiku=(0, 0))
 
     async def state():
         return a.fake
@@ -116,14 +118,40 @@ def run(coro):
 
 
 def test_pin_holds_backend_for_the_whole_conversation(adm):
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    run(adm.admit(req(), "anthropic_messages", "enforce"))
+    adm.fake = st(opus=(1, 1), haiku=(0, 0))  # opus busy: a local pin waits its turn, no cloud
+    d2 = req(cid="c2")
+    run(adm.admit(d2, "anthropic_messages", "enforce"))
+    assert d2["model"] == "ultron/opus" and adm.recent["c2"].startswith("ultron/opus; rule=pinned:1:loaded")
+
+
+def test_overflow_pin_returns_local_once_it_fits(adm):
     d = req()
     run(adm.admit(d, "anthropic_messages", "enforce"))
     assert d["model"] == "cloud/opus" and d["extra_headers"]["X-Session-Id"] == "S1"
-    adm.fake = st(opus=(0, 0), haiku=(0, 0))  # opus frees up: the conversation still stays on cloud
-    d2 = req(cid="c2")
+    d2 = req(cid="c2")  # opus still busy: the overflow pin stands
     run(adm.admit(d2, "anthropic_messages", "enforce"))
-    assert d2["model"] == "cloud/opus"
-    assert adm.recent["c2"].startswith("cloud/opus; rule=pinned:4:overflow")
+    assert d2["model"] == "cloud/opus" and adm.recent["c2"].startswith("cloud/opus; rule=pinned:4:overflow:queue")
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))  # opus frees up: the conversation re-pins local
+    d3 = req(cid="c3")
+    run(adm.admit(d3, "anthropic_messages", "enforce"))
+    assert d3["model"] == "ultron/opus" and "extra_headers" not in d3
+    assert adm.recent["c3"].startswith("ultron/opus; rule=repin:1:loaded")
+    last = json.loads(open(ua.LOG_PATH).read().splitlines()[-1])
+    assert last["rule"] == "repin:1:loaded" and last["new"] is False
+    adm.fake = st(opus=(1, 1), haiku=(0, 0))  # now an ordinary local pin: busy opus no longer overflows
+    d4 = req(cid="c4")
+    run(adm.admit(d4, "anthropic_messages", "enforce"))
+    assert d4["model"] == "ultron/opus" and adm.recent["c4"].startswith("ultron/opus; rule=pinned:1:loaded")
+
+
+def test_explicit_cloud_pin_stays_cloud(adm):
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    run(adm.admit(req(x_route="cloud"), "anthropic_messages", "enforce"))
+    d2 = req(cid="c2")  # header gone, opus idle: the conversation still stays on cloud
+    run(adm.admit(d2, "anthropic_messages", "enforce"))
+    assert d2["model"] == "cloud/opus" and adm.recent["c2"].startswith("cloud/opus; rule=pinned:x-route:cloud")
 
 
 def test_mock_replies_are_not_admitted(adm):
@@ -372,7 +400,14 @@ def test_mem_guard_triggers_and_holds():
     # held MEM_HOLD_S after the last trigger, even with headroom back
     assert a.mem_guard(ok(1001 + ua.MEM_HOLD_S - 1)) == "headroom 3.0G"
     assert a.mem_guard(ok(1001 + ua.MEM_HOLD_S + 1)) is None
-    assert a.mem_guard(ok(2000, pressure=2)) == "pressure 2"
+    # after the hold: still tight until headroom is back over MEM_CLEAR_GB (hysteresis), then clear
+    assert a.mem_guard(ok(1500, headroom=3 * G)) == "headroom 3.0G"
+    assert a.mem_guard(ok(1500 + ua.MEM_HOLD_S + 1, headroom=(ua.MEM_CLEAR_GB - 1) * G)) == "headroom 3.0G"
+    assert a.mem_guard(ok(1500 + ua.MEM_HOLD_S + 2, headroom=(ua.MEM_CLEAR_GB + 1) * G)) is None
+    assert a.mem_guard(ok(1500 + ua.MEM_HOLD_S + 3, headroom=(ua.MEM_CLEAR_GB - 1) * G)) is None  # no re-trip over MEM_LOW_GB
+    assert a.mem_guard(ok(2000, pressure=4)) == "pressure 4"
+    # kernel "warn" (2) is the normal state with three tiers resident: not a reason to leave local
+    assert ua.Admission().mem_guard(ok(2500, pressure=2)) is None
     # swap-outs: 40 MB/s since the previous sample
     b = ua.Admission()
     b.mem_guard(ok(3000, so=0))
@@ -394,16 +429,20 @@ def test_pinned_local_conversation_overflows_while_memory_is_tight(adm):
     assert adm.recent["c2"].endswith("overflow=mem; mem=headroom 2.0G")
     last = json.loads(open(ua.LOG_PATH).read().splitlines()[-1])
     assert last["overflow"] == "mem" and last["mem_tight"] == "headroom 2.0G"
-    # a new conversation while tight pins cloud for good
+    # a new conversation while tight pins cloud, and stays there while it's still tight
     n = req(session="S-new", cid="c3")
     run(adm.admit(n, "anthropic_messages", "enforce"))
     assert n["model"] == "cloud/opus" and adm.recent["c3"].startswith("cloud/opus; rule=4:overflow:mem")
-    # memory back: the pinned conversation returns local, the new one stays on cloud
+    n1 = req(session="S-new", cid="c3b")
+    run(adm.admit(n1, "anthropic_messages", "enforce"))
+    assert n1["model"] == "cloud/opus" and adm.recent["c3b"].startswith("cloud/opus; rule=pinned:4:overflow:mem")
+    # memory back: both return local; the new one re-pins from its overflow pin
     adm.fake = st(opus=(0, 0), haiku=(0, 0))
     d2, n2 = req(cid="c4"), req(session="S-new", cid="c5")
     run(adm.admit(d2, "anthropic_messages", "enforce"))
     run(adm.admit(n2, "anthropic_messages", "enforce"))
-    assert d2["model"] == "ultron/opus" and n2["model"] == "cloud/opus"
+    assert d2["model"] == "ultron/opus" and n2["model"] == "ultron/opus"
+    assert adm.recent["c5"].startswith("ultron/opus; rule=repin:1:loaded")
 
 
 def test_private_stays_local_while_memory_is_tight(adm):
@@ -622,10 +661,15 @@ def test_example_matrix_fable_swaps_only_opus():
     t = ua.tiers()
     sets = ua._expand(t.resident, {}, {})
     costs = {n: t.tier[n]["evict_cost"] for n in t.names}
-    assert set(sets) == {frozenset({"opus", "sonnet", "haiku"}), frozenset({"fable", "sonnet", "haiku"})}
+    assert set(sets) == {frozenset({"opus", "sonnet", "haiku"}), frozenset({"fable", "sonnet", "haiku"}),
+                         frozenset({"judge", "sonnet", "haiku"})}
+    assert all({"sonnet", "haiku"} <= s for s in sets)  # always resident
     assert ua.evictees("fable", {"opus", "sonnet", "haiku"}, sets, costs) == {"opus"}
     assert ua.evictees("opus", {"fable", "sonnet", "haiku"}, sets, costs) == {"fable"}
     assert ua.evictees("sonnet", {"fable", "haiku"}, sets, costs) == set()
+    assert ua.evictees("judge", {"opus", "sonnet", "haiku"}, sets, costs) == {"opus"}  # never sonnet or haiku
+    assert ua.evictees("judge", {"fable", "sonnet", "haiku"}, sets, costs) == {"fable"}
+    assert ua.evictees("opus", {"sonnet", "haiku", "judge"}, sets, costs) == {"judge"}
 
 
 # ----------------------------------------------------------------------------- memory gate (local only)
@@ -750,3 +794,181 @@ def test_upstream_model_renders_use_model_name():
 def test_example_haiku_is_text_only():
     t = ua.tiers()
     assert "haiku" in t.no_vision() and t.vision_tier == "sonnet"
+
+
+def test_routed_no_rules():
+    import ultron_tiers
+    t = ultron_tiers.Tiers("[routing]\n[big]\n[judge]\nrouted = no\nupstream_model = ~/m/judge\n[small]\n")
+    assert not t.problems and t.routed() == ["big", "small"]
+    assert t.default == "big" and t.helper == "small" and t.vision_tier == "big"  # defaults skip routed = no
+    assert t.tier_for("ultron/judge") == "judge" and t.tier_for("judge") == "judge" and t.tier_for("x") == "big"
+    sw = ultron_tiers.blocks(t, home="/h")["__TIERS_SWAP_MODELS__"]
+    assert 'useModelName: "/h/m/judge"' in sw  # ~/ is the home directory
+    lm = ultron_tiers.blocks(t)["__TIERS_MODEL_LIST__"]
+    assert '"ultron/judge"' in lm and "cloud/judge" not in lm
+    bad = ultron_tiers.Tiers("[routing]\nhelper = j\n[big]\nsubstitute = j\n[j]\nrouted = no\ncloud = x\nmatch = j-*\n")
+    assert set(bad.problems) == {"[routing] helper = j: that tier has routed = no",
+                                 "[big] substitute = j: that tier has routed = no",
+                                 "[j] match: not allowed with routed = no", "[j] cloud: not allowed with routed = no"}
+
+
+def test_cloud_entries_cache_and_never_fall_back():
+    import ultron_tiers
+    b = ultron_tiers.blocks(ua.tiers())
+    assert b["__TIERS_FALLBACKS__"].startswith("fallbacks: []")
+    assert b["__TIERS_MODEL_LIST__"].count("cache_control_injection_points") == len(
+        [n for n in ua.tiers().names if ua.tiers().has_cloud(n)])
+
+
+def test_chat_bridge_is_the_cloud_endpoint_only(monkeypatch):
+    monkeypatch.setenv("OMNIROUTE_BASE", "https://omniroute.example.com:20128/v1")
+    assert ua.chat_bridge("https://omniroute.example.com:20128/v1")
+    for base in ("https://api.openai.com/v1", "http://127.0.0.1:8001/v1", "https://omniroute.example.com:8443/v1", None):
+        assert not ua.chat_bridge(base), base
+    monkeypatch.setenv("ULTRON_CHAT_BRIDGE", "off")
+    assert not ua.chat_bridge("https://omniroute.example.com:20128/v1")
+    monkeypatch.setenv("OMNIROUTE_BASE", "")
+    monkeypatch.delenv("ULTRON_CHAT_BRIDGE")
+    assert not ua.chat_bridge("")
+
+
+def test_cloud_messages_take_chat_bridge(monkeypatch):
+    pytest.importorskip("litellm.llms")   # the real LiteLLM, not this repo's litellm/ folder
+    from litellm.llms.anthropic.experimental_pass_through.adapters.handler import (
+        LiteLLMMessagesToCompletionTransformationHandler as ChatBridge,
+    )
+    from litellm.llms.anthropic.experimental_pass_through.responses_adapters.handler import (
+        LiteLLMMessagesToResponsesAPIHandler as ResponsesBridge,
+    )
+    monkeypatch.setenv("OMNIROUTE_BASE", "https://omniroute.example.com:20128/v1")
+    assert ua.patch_omniroute_chat_bridge() and ua.patch_omniroute_chat_bridge()  # idempotent
+    calls = []
+    monkeypatch.setattr(ChatBridge, "anthropic_messages_handler", staticmethod(lambda **kw: calls.append(kw) or "chat"))
+    args = dict(max_tokens=8, messages=[{"role": "user", "content": "hi"}], model="openai/anthropic/claude-sonnet-5.5", _is_async=True)
+    assert ResponsesBridge.anthropic_messages_handler(api_base="https://omniroute.example.com:20128/v1", **args) == "chat"
+    assert calls and calls[0]["api_base"].startswith("https://omniroute")
+    other = ResponsesBridge.anthropic_messages_handler(api_base="https://api.openai.com/v1", **args)  # coroutine, not run
+    assert asyncio.iscoroutine(other) and len(calls) == 1
+    other.close()
+
+
+def test_docs_to_text(monkeypatch):
+    import base64
+    seen = []
+    monkeypatch.setattr(ua, "pdf_text", lambda data: seen.append(data) or "--- page 1 ---\nHello\n\n--- page 2 ---\nWorld")
+    monkeypatch.setattr(ua, "_doc_cache", ua.OrderedDict())
+    pdf = "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.7 x").decode()
+    img = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+    msgs = [{"role": "user", "content": "summarize the pdf"},
+            {"role": "assistant", "content": "", "tool_calls": [_call(1)]},
+            {"role": "tool", "tool_call_id": "c1", "content": [{"type": "image_url", "image_url": {"url": pdf}}]},
+            {"role": "user", "content": [img, {"type": "file", "file": {"file_data": "data:text/plain;base64,"
+                                                                       + base64.b64encode(b"notes").decode()}},
+                                         {"type": "file", "file": {"file_data": "data:application/zip;base64,UEs="}}]}]
+    hook = ua.UltronAdmit()
+    out = asyncio.run(hook.async_pre_call_deployment_hook(
+        {"model": "hosted_vllm/opus", "api_base": "http://127.0.0.1:8001/v1", "messages": msgs}, None))["messages"]
+    assert seen == [b"%PDF-1.7 x"]
+    assert out[2]["content"][0]["text"].startswith("[application/pdf attachment, 2 page(s), converted to text]\n--- page 1 ---\nHello")
+    assert out[3]["content"][0] is img  # images stay for the vision tiers
+    assert out[3]["content"][1]["text"] == "[text/plain attachment]\nnotes"
+    assert "application/zip attachment omitted" in out[3]["content"][2]["text"]
+    assert out[0] is msgs[0] and msgs[2]["content"][0]["type"] == "image_url"  # input untouched
+    ua.docs_to_text(msgs)
+    assert len(seen) == 1  # cached: the PDF rides along in every later request of the conversation
+    monkeypatch.setattr(ua, "pdf_text", lambda data: "--- page 1 ---\n\n")
+    monkeypatch.setattr(ua, "_doc_cache", ua.OrderedDict())
+    assert "no text layer" in ua.docs_to_text(msgs)[2]["content"][0]["text"]
+    cloud = {"model": "openai/anthropic/claude-opus-5.5", "api_base": "https://omniroute.example.com/v1", "messages": msgs}
+    assert asyncio.run(hook.async_pre_call_deployment_hook(cloud, None))["messages"][2] is msgs[2]  # cloud: untouched
+
+
+def test_one_shot_local_requests_skip_the_mtplx_bank():
+    hook = ua.UltronAdmit()
+    local = "http://127.0.0.1:8001/v1"
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+    first = [{"role": "user", "content": "title this"}]
+    later = first + [{"role": "assistant", "content": "ok"}, {"role": "user", "content": "more"}]
+
+    def run(model="hosted_vllm/haiku", base=local, msgs=first, cid=None, **kw):
+        out = asyncio.run(hook.async_pre_call_deployment_hook(
+            {"model": model, "api_base": base, "messages": list(msgs), "litellm_call_id": cid, **kw}, None))
+        return (out.get("extra_headers") or {}).get("x-mtplx-cache-mode")
+
+    assert run() == "bypass"                                      # single-turn, no tools
+    assert run(model="hosted_vllm/sonnet") == "bypass"            # every local tier
+    assert run(tools=tools) is None                               # an agent's first turn will be continued
+    assert run(msgs=later) is None                                # a conversation already under way
+    assert run(model="openai/anthropic/claude-haiku-4.5", base="https://omniroute.example.com/v1") is None
+    hook.admission.recent["c1"] = "ultron/sonnet; rule=pinned:1:loaded; applied; vision->sonnet"
+    assert run(msgs=later, tools=tools, cid="c1") == "bypass"     # image rerouted off a no-vision tier: one request
+    assert hook.admission.recent["c1"].endswith("; bank=off(vision)")
+    assert run(extra_headers={"X-Other": "1"}) == "bypass"        # merges with headers already set
+
+
+def test_one_shot():
+    assert ua.one_shot([{"role": "user", "content": "x"}], None) == "single-turn"
+    assert ua.one_shot([{"role": "user", "content": "x"}], [{"name": "Bash"}]) is None
+    assert ua.one_shot([{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}], None) is None
+    assert ua.one_shot([], [{"name": "Bash"}], "ultron/sonnet; vision->sonnet") == "vision"
+
+
+# ----------------------------------------------------------------------------- routed = no (the image judge)
+
+JUDGE_SETS = ua._expand("(opus | judge) & sonnet & haiku", {}, {})
+JUDGE_COSTS = {"opus": 3, "sonnet": 5, "haiku": 5, "judge": 1}
+
+
+def test_judge_waits_for_opus_then_goes(adm, monkeypatch):
+    """Loading the judge unloads opus (sonnet stays): it waits out opus's request like a local-only
+    reload, and is never routed anywhere else (no cloud twin, no pin)."""
+    monkeypatch.setattr(ua, "matrix", lambda: (JUDGE_SETS, JUDGE_COSTS))
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(ua.asyncio, "sleep", lambda s: real_sleep(0))
+    polls = iter([st(opus=(1, 0), sonnet=(0, 0), haiku=(0, 0))] * 3 + [st(opus=(0, 0), sonnet=(0, 0), haiku=(0, 0))] * 10**3)
+
+    async def state():
+        return next(polls)
+    adm.state = state
+    d = req(model="judge", cid="j1")
+    out = run(adm.admit(d, "acompletion", "enforce"))
+    assert d["model"] == "ultron/judge" and "extra_headers" not in d  # a bare name -> the canonical id
+    assert out["rule"] == "direct" and out["requested"] == "judge"
+    assert out["busy_evictees_after_wait"] is None and out["mem_wait"]["gave_up_on"] is None
+    assert next(polls)["tiers"]["opus"]["active"] == 0  # it polled past the busy reads
+    assert adm.recent["j1"] == "ultron/judge; rule=direct"
+
+
+def test_judge_gives_up_on_a_busy_opus(adm, monkeypatch):
+    monkeypatch.setattr(ua, "matrix", lambda: (JUDGE_SETS, JUDGE_COSTS))
+    monkeypatch.setattr(ua, "EVICT_WAIT_MAX_S", 0)
+    monkeypatch.setattr(ua, "MEM_WAIT_MAX_S", 0)
+    adm.fake = st(opus=(1, 0), sonnet=(0, 0), haiku=(0, 0))
+    out = run(adm.admit(req(model="ultron/judge", cid="j1"), "acompletion", "enforce"))
+    assert out["busy_evictees_after_wait"] == ["opus"] and adm.recent["j1"].endswith("evicted-busy=opus")
+
+
+def test_judge_shadow_mode_does_not_wait(adm, monkeypatch):
+    monkeypatch.setattr(ua, "matrix", lambda: (JUDGE_SETS, JUDGE_COSTS))
+    adm.fake = st(opus=(1, 0), sonnet=(0, 0), haiku=(0, 0))
+    out = run(adm.admit(req(model="ultron/judge", cid="j1"), "acompletion", "shadow"))
+    assert out["rule"] == "direct" and out["mem_wait"] is None and out["busy_evictees_after_wait"] is None
+
+
+def test_loaded_judge_never_blocks_a_fit(adm, monkeypatch):
+    """A new opus conversation while the judge holds opus's place: opus cold-fits (llama-swap
+    unloads the judge), it doesn't overflow to cloud."""
+    monkeypatch.setattr(ua, "matrix", lambda: (JUDGE_SETS, JUDGE_COSTS))
+    adm.fake = st(sonnet=(0, 0), haiku=(0, 0), judge=(0, 0))
+    d = req(model="claude-opus-5-5", session="S2", cid="o1")
+    out = run(adm.admit(d, "anthropic_messages", "enforce"))
+    assert d["model"] == "ultron/opus" and out["rule"] == "2:cold-fits"
+
+
+def test_opus_reload_waits_for_a_busy_judge(adm, monkeypatch):
+    monkeypatch.setattr(ua, "matrix", lambda: (JUDGE_SETS, JUDGE_COSTS))
+    monkeypatch.setattr(ua, "OVERFLOW_WAIT_S", 0)
+    adm.fake = st(sonnet=(0, 0), haiku=(0, 0), judge=(1, 0))  # a ranking request is mid-flight
+    d = req(model="claude-opus-5-5", session="S2", cid="o1")
+    run(adm.admit(d, "anthropic_messages", "enforce"))
+    assert d["model"] == "cloud/opus" and adm.recent["o1"].endswith("overflow=evict-busy")

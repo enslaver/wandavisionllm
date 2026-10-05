@@ -1,0 +1,185 @@
+{
+ "_": "ComfyUI custom_nodes pinned to the commits the reference GPU box runs (2026-10-03). group core = always installed; extra = the rest of that install, optional (deploy.py push nodes --all).",
+ "nodes": [
+  {
+   "name": "asset-sync",
+   "url": "https://github.com/jaisurya-dev-art/ComfyUI-AssetSync",
+   "commit": "714fe8a65b6ed9eec8c9345fb111f769cd71ccd0",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-CameraPack",
+   "url": "https://github.com/PozzettiAndrea/ComfyUI-CameraPack",
+   "commit": "a58268fe5261d07ffeb93de26cc0d2558a5c0110",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-easy-sam3",
+   "url": "https://github.com/yolain/ComfyUI-Easy-Sam3",
+   "commit": "88fe578a1a5e03d95281197303d5d3a73fd5a089",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-Easy-Use",
+   "url": "https://github.com/yolain/ComfyUI-Easy-Use",
+   "commit": "450b1ce4ce43b2280521c87f5fa388a898fb2ad2",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-fish-audio-s2",
+   "url": "https://github.com/Saganaki22/ComfyUI-FishAudioS2",
+   "commit": "521f33fe79c081da314dc905ce399c62edb24749",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-GGUF",
+   "url": "https://github.com/city96/ComfyUI-GGUF",
+   "commit": "6ea2651e7df66d7585f6ffee804b20e92fb38b8a",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-inpaint-cropandstitch",
+   "url": "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch",
+   "commit": "00d4776c52d84ce150ce5fe50bf90f956db02a4c",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-itools",
+   "url": "https://github.com/MohammadAboulEla/ComfyUI-iTools",
+   "commit": "a8f2fef227ca5b0cb9321c39ac7b874a906b1a5b",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-kjnodes",
+   "url": "https://github.com/kijai/ComfyUI-KJNodes",
+   "commit": "b3ec064dde7d122b333660918e1200e928e67ff1",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-krea2edit",
+   "url": "https://github.com/lbouaraba/comfyui-krea2edit",
+   "commit": "86f886dac23013d88996e3a2e99093ba44d322fb",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-Krea2T-Enhancer",
+   "url": "https://github.com/capitan01R/ComfyUI-Krea2T-Enhancer",
+   "commit": "85baaf0145b532ce3418b016cefca76f90648d6d",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-manager",
+   "url": "https://github.com/Comfy-Org/ComfyUI-Manager",
+   "commit": "9002c327b355d323253167975a87b75efab279a1",
+   "group": "core"
+  },
+  {
+   "name": "ComfyUI-MelBandRoFormer",
+   "url": "https://github.com/kijai/ComfyUI-MelBandRoFormer",
+   "commit": "92c86854e6654f4aacc97484471af95c98ea16d4",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-mesh2motion",
+   "url": "https://github.com/jtydhr88/ComfyUI-mesh2motion.git",
+   "commit": "11fe6b7aaa5eac60afa3d726389cd9dd870ed1f6",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-Pixaroma",
+   "url": "https://gitlab.com/pixaroma/ComfyUI-Pixaroma.git",
+   "commit": "5906cb89f5d96fbbd2019a9b1a2d4f43002dccee",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-QwenVL",
+   "url": "https://github.com/1038lab/ComfyUI-QwenVL",
+   "commit": "06c71e3cc97010a3c61e19a8152755e809e90d15",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-SCAIL-Pose",
+   "url": "https://github.com/kijai/ComfyUI-SCAIL-Pose",
+   "commit": "1db9ac3b44b93c336402512c118d35a89a0bee58",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-SkinToken",
+   "url": "https://github.com/Rizzlord/ComfyUI-SkinToken.git",
+   "commit": "4a83157322d222b2e8e0f05acc9dff0daae567ce",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-TiledDiffusion",
+   "url": "https://github.com/shiimizu/ComfyUI-TiledDiffusion",
+   "commit": "a155b1bac39147381aeaa52b9be42e545626a44f",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-UniRig",
+   "url": "https://github.com/PozzettiAndrea/ComfyUI-UniRig.git",
+   "commit": "69ee59dc459d2da7cb0291930c1f944886c31d7c",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui-videohelpersuite",
+   "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+   "commit": "4d907bee61e92c2e65af3bd6383a4e4d356126d1",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-WanAnimatePreprocess",
+   "url": "https://github.com/kijai/ComfyUI-WanAnimatePreprocess",
+   "commit": "0e0b6a2a555625acf4d4aefb780e27d06937132f",
+   "group": "extra"
+  },
+  {
+   "name": "ComfyUI-WanVideoWrapper",
+   "url": "https://github.com/kijai/ComfyUI-WanVideoWrapper",
+   "commit": "088128b224242e110d3906c6750e9a3a348a659b",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui_controlnet_aux",
+   "url": "https://github.com/Fannovel16/comfyui_controlnet_aux",
+   "commit": "59b1fc411ede8623b2997855b8018f0b3b6cf49f",
+   "group": "extra"
+  },
+  {
+   "name": "comfyui_layerstyle",
+   "url": "https://github.com/chflame163/ComfyUI_LayerStyle",
+   "commit": "5ba939099b33f998ecfbd63dcbbf089925b64a47",
+   "group": "extra"
+  },
+  {
+   "name": "controlaltai-nodes",
+   "url": "https://github.com/gseth/ControlAltAI-Nodes",
+   "commit": "721492b66c9cede8ae23ae10615462ad80cfd061",
+   "group": "extra"
+  },
+  {
+   "name": "one-node-flux-2-klein",
+   "url": "https://github.com/yanokusnir-ai/one-node-flux-2-klein",
+   "commit": "7827d1e4f1a51837c3e77b045ef56a2c34564c3f",
+   "group": "extra"
+  },
+  {
+   "name": "qwen3-tts-comfyui",
+   "url": "https://github.com/flybirdxx/ComfyUI-Qwen-TTS",
+   "commit": "c96e21027ae79bc9903863c55637456786313fd7",
+   "group": "extra"
+  },
+  {
+   "name": "rgthree-comfy",
+   "url": "https://github.com/rgthree/rgthree-comfy",
+   "commit": "2c5342a8cb0eaecaabf61435a5f37dd594c510ba",
+   "group": "extra"
+  },
+  {
+   "name": "seedvr2_videoupscaler",
+   "url": "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler",
+   "commit": "4490bd1f482e026674543386bb2a4d176da245b9",
+   "group": "extra"
+  }
+ ]
+}

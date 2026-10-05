@@ -10,6 +10,7 @@ video and search need endpoints OmniRoute has) instead of the local tier:
     video      "make a video of ..."          -> /v1/videos/generations   reply: link now, file when done
     search     "search the web for ..."       -> /v1/search               results added to the prompt
     audio      an input_audio block           -> /v1/audio/transcriptions transcript replaces the audio
+                                                 (or /v1/chat/completions, see audio_chat_prefixes)
 
 Replies (image, edit, video) are returned without a backend call via mock_response, the way
 loop_breaker answers a stop. Search and audio only add text; the tier still answers.
@@ -68,6 +69,9 @@ DEFAULTS: dict[str, Any] = {
     # Ids the endpoint only serves through /chat/completions (image or audio models that answer in
     # chat), e.g. ["gemini/"] on OmniRoute. They are sent as chat messages instead of /images, /audio.
     "chat_prefixes": [],
+    # Ids that make images through /images but transcribe only as a chat input_audio block (chat models
+    # that take audio input; OmniRoute's /audio/transcriptions refuses them).
+    "audio_chat_prefixes": [],
     "search_results": 5,
     "agents": True,  # act on tool-carrying requests (needs the helper tier's confirmation)
     "helper": "http://127.0.0.1:8001/v1",  # llama-swap: the helper tier answers the yes/no check
@@ -297,6 +301,16 @@ def link(name: str) -> str:
     return conf()["public"].rstrip("/") + "/" + name
 
 
+def _direct_model(model: Any) -> bool:
+    """A tiers.conf model with `routed = no` (served only when asked for by name, like the image judge)."""
+    try:
+        t = ultron_tiers.load()
+        name = t.tier_for(str(model or ""))
+        return bool(name) and not t.tier[name]["routed"]
+    except Exception:
+        return False
+
+
 def _via_chat(model: str) -> bool:
     return model.startswith(tuple(conf()["chat_prefixes"]))
 
@@ -391,7 +405,7 @@ def transcribe(raw: bytes, fmt: str) -> tuple[str, str]:
     errs = []
     for model in conf()["transcribe"]:
         try:
-            if _via_chat(model):
+            if _via_chat(model) or model.startswith(tuple(conf()["audio_chat_prefixes"])):
                 resp = _post("/chat/completions", json.dumps({"model": model, "max_tokens": 4000, "messages": [{
                     "role": "user", "content": [
                         {"type": "text", "text": "Transcribe this audio verbatim. Output only the transcript."},
@@ -433,7 +447,8 @@ def helper_confirm(text: str, kind: str) -> bool:
                            "chat_template_kwargs": {"enable_thinking": False},
                            "messages": [{"role": "user", "content": q}]}).encode()
         req = urllib.request.Request(conf()["helper"] + "/chat/completions", body,
-                                     {"Content-Type": "application/json", "Authorization": "Bearer none"})
+                                     {"Content-Type": "application/json", "Authorization": "Bearer none",
+                                      "x-mtplx-cache-mode": "bypass"})  # one-shot: don't bank it (CACHE_BYPASS in ultron_admit)
         with urllib.request.urlopen(req, timeout=TIMEOUT["confirm"]) as r:
             out = json.loads(r.read())["choices"][0]["message"].get("content") or ""
         return out.strip().upper().startswith("MEDIA")
@@ -495,6 +510,8 @@ class Media:
         if mode == "off" or data.get("mock_response") or _opted_out(data) or call_type not in (
                 "completion", "acompletion", "anthropic_messages", "text_completion"):
             return
+        if _direct_model(data.get("model")):
+            return  # e.g. the image judge (Vision/judge/rank.py): two images and a prompt can read like an edit request
         turn = human_turn(data)
         if not turn:
             return

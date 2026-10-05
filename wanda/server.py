@@ -185,7 +185,7 @@ def tier_config():
         return _cfg_cache["tiers"]
     out, cur = {t: {} for t in tier_names()}, None
     for line in SWAP_CFG.read_text().splitlines():
-        m = re.match(r"^  ([\w-]+):\s*$", line)
+        m = re.match(r"^  ([\w-]+):\s*(?:#.*)?$", line)   # a trailing comment too, or the next tier's cmd lands here
         if m:
             cur = m.group(1) if m.group(1) in out else None
             continue
@@ -219,8 +219,31 @@ MEM_SYSCTLS = ("hw.pagesize", "vm.page_free_count", "vm.page_pageable_external_c
                "vm.page_speculative_count", "vm.page_purgeable_count")
 
 
+_TOP = {"t": 0, "procs": []}
+_UNIT = {"B": 1, "K": 2**10, "M": 2**20, "G": 2**30}
+
+
+def top_procs(n=8, every=30):
+    """Biggest processes by memory, so "what else is using the Mac's RAM" is on the panel (swap once sat at
+    27 GB with only two small tiers loaded). `top` shows MEM (resident) and CMPRS (compressed); `ps` RSS would
+    miss a process whose pages were swapped or compressed. Cached: top takes ~1 s and this runs every 3 s."""
+    now = time.time()
+    if now - _TOP["t"] < every:
+        return _TOP["procs"]
+    out = sh("top", "-l", "1", "-o", "mem", "-n", str(n), "-stats", "pid,command,mem,cmprs", timeout=10)
+    procs = []
+    for line in out.splitlines():
+        # "1234  mtplx  21G  3G"; the command may hold spaces, so peel the numbers off the right
+        mm = re.match(r"^\s*(\d+)\s+(.+?)\s+([\d.]+)([BKMG])[+-]?\s+([\d.]+)([BKMG])[+-]?\s*$", line)
+        if mm:
+            procs.append({"pid": int(mm.group(1)), "name": mm.group(2).strip(),
+                          "mem": float(mm.group(3)) * _UNIT[mm.group(4)], "cmprs": float(mm.group(5)) * _UNIT[mm.group(6)]})
+    _TOP.update(t=now, procs=procs[:n])
+    return _TOP["procs"]
+
+
 def machine_stats():
-    m = {"load": os.getloadavg()[0]}
+    m = {"load": os.getloadavg()[0], "top_procs": top_procs()}
     try:
         m["mem_total"] = int(sh("sysctl", "-n", "hw.memsize").strip())
     except ValueError:
@@ -1012,6 +1035,8 @@ def services_status():
 # ---------------------------------------------------------------------------------------------
 TRACE_DIR = Path(os.path.expanduser(os.environ.get("ULTRON_TRACE_DIR", str(ULTRON_DIR / "traces"))))
 LORA_DIR = HOME / "lora"
+LORA_MERGES = LORA_DIR / "merges"   # Unsloth merges trained on the GPU box, copied here to forge (lora/README.md)
+MTPLX_MODELS = HOME / ".mtplx" / "models"   # those merges are forged into MTPLX packs here, not fused into ~/lora/packs
 LORA_STAGE_RE = re.compile(r"\b(make_dataset|train|valloss|eval|fuse_pack)\.py\b")
 LORA_NAME_RE = re.compile(r"/lora/(?:runs|data|packs)/([^/\s]+)")
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -1083,6 +1108,20 @@ def lora_active():
     return None
 
 
+def _forged_from(pack):
+    """The ~/lora dir a forged MTPLX pack was built from (mtplx_runtime.json base_trunk), else None."""
+    pack = str(pack).replace("${HOME}", str(HOME)).replace("$HOME", str(HOME))   # tier scripts say MODEL="$HOME/..."
+    try:
+        trunk = json.loads((Path(pack) / "mtplx_runtime.json").read_text()).get("base_trunk") or ""
+    except (OSError, ValueError, AttributeError):
+        return None
+    return trunk if trunk.startswith(str(LORA_DIR) + "/") else None
+
+
+def _pack_bytes(d):
+    return sum(f.stat().st_size for f in d.iterdir() if f.is_file())
+
+
 def lora_stats():
     names = set(tier_names())
     traces, newest, size = {}, 0, 0
@@ -1103,18 +1142,36 @@ def lora_stats():
                 runs.append(_lora_run(d))
             except OSError:
                 pass
+    for d in LORA_MERGES.glob("*"):
+        if d.is_dir():
+            try:
+                tier = d.name.split("-", 1)[0]
+                runs.append({"name": d.name, "t": d.stat().st_mtime, "ckpts": 0,
+                             "tier": tier if tier in names else None, "where": "the GPU box"})
+            except OSError:
+                pass
     runs.sort(key=lambda r: r["t"], reverse=True)
     packs = []
     for d in (LORA_DIR / "packs").glob("*"):
         if d.is_dir():
             try:
-                packs.append({"name": d.name, "t": d.stat().st_mtime,
-                              "bytes": sum(f.stat().st_size for f in d.iterdir() if f.is_file())})
+                packs.append({"name": d.name, "t": d.stat().st_mtime, "bytes": _pack_bytes(d)})
+            except OSError:
+                pass
+    for d in MTPLX_MODELS.glob("*"):
+        src = _forged_from(d) if d.is_dir() else None
+        if src:
+            try:
+                packs.append({"name": d.name, "t": d.stat().st_mtime, "bytes": _pack_bytes(d),
+                              "from": os.path.basename(src.rstrip("/"))})
             except OSError:
                 pass
     packs.sort(key=lambda r: r["t"], reverse=True)
-    serving = {t: os.path.basename(c["model_path"].rstrip("/")) for t, c in tier_config().items()
-               if "/lora/packs/" in (c.get("model_path") or "")}
+    serving = {}
+    for t, c in tier_config().items():
+        p = c.get("model_path") or ""
+        if p and ("/lora/packs/" in p or _forged_from(p)):
+            serving[t] = os.path.basename(p.rstrip("/"))
     return {"traces": traces, "trace_newest": newest or None, "trace_bytes": size,
             "runs": runs[:12], "packs": packs, "serving": serving, "active": lora_active()}
 

@@ -4,7 +4,8 @@
 Runs against the running stack on this Mac (LiteLLM :4000, llama-swap :8001, OmniRoute if configured):
 
     health          services up, a missing key gets 401, Wanda's memory reading is sane, the helper
-                    tier is resident, and every OmniRoute model id the stack names exists there (when
+                    tier and every preload/ttl 0 tier are resident, the loaded tiers are an allowed
+                    resident set, and every OmniRoute model id the stack names exists there (when
                     OMNIROUTE_BASE is set). No tier loads.
     swap [--live]   tier admission / swapping. Default is a safe decision-table pass against the
                     live matrix + pins DB (no real requests). --live sends real requests and
@@ -70,6 +71,7 @@ LITELLM_CONFIG = os.path.expanduser("~/.litellm/config.yaml")
 SUITE_AGENT = {"X-Claude-Code-Agent-Id": "suite"}  # subagent pins: never "warm main", so swaps don't wait on them
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Vision", "media"))  # the media hook lives with Vision
 import ultron_admit as ua          # pure stdlib; decision logic
 import ultron_media as um          # media classifier
 
@@ -309,6 +311,12 @@ def cmd_health(args):
     st, _, data, _ = request("GET", LLAMASWAP + "/running", timeout=5)
     running = {r.get("model"): r.get("state") for r in data.get("running", [])} if isinstance(data, dict) else {}
     check("health", f"helper tier {helper} resident", running.get(helper) == "ready", f"running {running}")
+    for t in [n for n in ua.tiers().names if ua.tiers().tier[n]["preload"] and ua.tiers().tier[n]["ttl"] == 0 and n != helper]:
+        check("health", f"{t} resident (preload, ttl 0: never unloads)", running.get(t) == "ready", f"running {running}")
+    loaded = {t for t, s in running.items() if s in ("ready", "starting")}
+    sets, _ = ua.matrix()
+    check("health", "loaded tiers are an allowed set (tiers.conf resident)", any(loaded <= s for s in sets),
+          f"loaded {sorted(loaded)}")
 
     st, _, data, _ = request("GET", WANDA + "/api/status", timeout=10)
     data = data if isinstance(data, dict) else {}
@@ -341,19 +349,24 @@ def cmd_health(args):
 
 # ----------------------------------------------------------------------------- swap
 
+def _full(tier: str) -> int:
+    """A queue that is full for this tier (tiers.conf max_waiting)."""
+    return (ua.tiers().tier.get(tier) or {}).get("max_waiting", 20)
+
+
 DECISION_SCENARIOS = [
     # (name, tier, {tier: (state, active, waiting)}, reserved, x_route, mode, expect)
     ("haiku loaded, queue ok", "haiku", {"haiku": ("ready", 1, 2)}, set(), "", "auto", ("ultron/haiku", "1:loaded")),
     ("opus loaded", "opus", {"opus": ("ready", 1, 0), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("ultron/opus", "1:loaded")),
     ("opus starting", "opus", {"opus": ("starting", 0, 0), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("ultron/opus", "1:loading")),
-    ("opus queue full", "opus", {"opus": ("ready", 1, 1), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("cloud/opus", "4:overflow:queue")),
+    ("opus queue full", "opus", {"opus": ("ready", 1, _full("opus")), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("cloud/opus", "4:overflow:queue")),
     ("sonnet cold-fits next to haiku", "sonnet", {"haiku": ("ready", 0, 0)}, set(), "", "auto", ("ultron/sonnet", "2:cold-fits")),
     ("sonnet cold-fits beside loaded opus (3-resident)", "sonnet", {"opus": ("ready", 0, 0), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("ultron/sonnet", "2:cold-fits")),
     ("idle sonnet pin does not block opus", "opus", {"haiku": ("ready", 0, 0)}, {"sonnet"}, "", "auto", ("ultron/opus", "2:cold-fits")),
     ("idle opus pin does not block sonnet", "sonnet", {"haiku": ("ready", 0, 0)}, {"opus"}, "", "auto", ("ultron/sonnet", "2:cold-fits")),
     ("memory pressure overflows sonnet", "sonnet", {"haiku": ("ready", 0, 0)}, set(), "", "auto", ("cloud/sonnet", "4:overflow:no-fit")),
-    ("haiku substitutes to loaded sonnet", "haiku", {"haiku": ("ready", 1, 3), "sonnet": ("ready", 0, 0)}, set(), "", "auto", ("ultron/sonnet", "3:substitute(haiku->sonnet)")),
-    ("private opus queues local", "opus", {"opus": ("ready", 1, 1), "haiku": ("ready", 0, 0)}, set(), "private", "auto", ("ultron/opus", "5:local-swap")),
+    ("haiku substitutes to loaded sonnet", "haiku", {"haiku": ("ready", 1, _full("haiku")), "sonnet": ("ready", 0, 0)}, set(), "", "auto", ("ultron/sonnet", "3:substitute(haiku->sonnet)")),
+    ("private opus queues local", "opus", {"opus": ("ready", 1, _full("opus")), "haiku": ("ready", 0, 0)}, set(), "private", "auto", ("ultron/opus", "5:local-swap")),
     ("memory pressure local-only sonnet swaps", "sonnet", {"haiku": ("ready", 0, 0)}, set(), "", "local-only", ("ultron/sonnet", "5:local-swap")),
     ("x-route cloud wins", "haiku", {"haiku": ("ready", 0, 0)}, set(), "cloud", "auto", ("cloud/haiku", "x-route:cloud")),
     ("route-mode cloud-only", "haiku", {"haiku": ("ready", 0, 0)}, set(), "", "cloud-only", ("cloud/haiku", "route-mode:cloud-only")),
@@ -479,7 +492,7 @@ def cmd_vision(args):
 
     # every tier from tiers.conf: a vision tier keeps the image and sees it; a no-vision tier reroutes
     # that request to [routing] vision, which sees it. x-route: private keeps both local.
-    for name in t.names:
+    for name in t.routed():  # not the routed = no models (the judge answers in its own rubric)
         model = (t.tier[name]["advertise"] or [f"ultron/{name}"])[0]
         want = f"ultron/{vt}" if name in blind else f"ultron/{name}"
         session = f"suite-vis-{name}-" + uuid.uuid4().hex[:8]
@@ -768,7 +781,7 @@ def stream_ttft(model, prompt, session, x_route, timeout=120, extra_headers=None
 
 def cmd_baseline(args):
     section("baseline: tokens/s per model" + (" + tool-call latency" if args.tool else "") + (" + TTFT" if args.ttft else ""))
-    models = [m.strip() for m in (args.model or ",".join(f"ultron/{n}" for n in ua.tiers().names)).split(",") if m.strip()]
+    models = [m.strip() for m in (args.model or ",".join(f"ultron/{n}" for n in ua.tiers().routed())).split(",") if m.strip()]
     prompt = ("Write a detailed paragraph about the history of computing from the 1940s to today. "
               "Include the people, machines and ideas, and end with a sentence about the present day.")
     tool_ask = "What is the weather in Paris right now? Use the get_weather tool to find out."

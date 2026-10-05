@@ -24,7 +24,7 @@ MODEL="Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"   # mtplx resolves Hugging Fa
 
 # Session-bank RAM cap. Each mtplx process otherwise plans for most of the Mac's memory, and three tiers would swap.
 export MTPLX_SESSION_BANK_MAX_BYTES=5G     # a long agent session (~90k tokens) needs ~3.6 GB
-export MTPLX_SESSION_BANK_IDLE_TTL_S=300   # drop idle warm sessions after 5 min (the SSD tier keeps them)
+export MTPLX_SESSION_BANK_IDLE_TTL_S=300   # drop idle warm sessions after 5 min (no SSD tier: see --ssd-session-cache)
 export MTPLX_LOOP_GUARD=1                  # in-reply repetition steering
 
 exec "$HOME/.mtplx/bin/mtplx" serve \
@@ -37,5 +37,5 @@ exec "$HOME/.mtplx/bin/mtplx" serve \
   --reasoning auto --preserve-thinking auto `# thinking on; history scoped to the active agent round` \
   --default-temperature 0.6 --default-top-p 0.95 --default-top-k 20 \
   --default-presence-penalty 0.0 \
-  --ssd-session-cache on \
+  --ssd-session-cache off `# mtplx 2.12.0 queues each SSD save with its bank entry, unbounded (fixed in 2.12.1): haiku's one-shot requests leaked ~85 MB each past the 5G cap until Metal ran out` \
   --yes "${EXTRA[@]}"

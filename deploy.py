@@ -108,7 +108,8 @@ except Exception as e:  # noqa: BLE001 — unreadable or not INI: nothing below 
 BLOCK_RE = re.compile(r"^([ \t]*)# (__TIERS_[A-Z_]+__)[ \t]*$", re.M)
 
 # component -> where it lives on the Mac and how it's reloaded. Listed in first-install order.
-#   files: listed files in the folder; tree: the whole folder (files removed here are removed there)
+#   files: listed files in the folder, or a (repo path, name) pair for one kept in another folder;
+#          tree: the whole folder (files removed here are removed there)
 #   idle: wait for LiteLLM to have no request in flight before touching it
 #   validate: run on the new file ({tmp}) before it replaces the live one
 #   after: shell run once the component's files are in place ("litellm"/"launchd": built-in steps)
@@ -123,7 +124,8 @@ COMPONENTS = {
     },
     "litellm": {
         "dst": "~/.litellm", "files": ["config.yaml", "tiers.conf", "agents.conf", "start.sh", "loop_breaker.py", "ultron_tiers.py",
-                                       "ultron_admit.py", "ultron_stats.py", "ultron_media.py", "ultron_rescue.py"],
+                                       "ultron_admit.py", "ultron_stats.py", "ultron_rescue.py",
+                                       ("Vision/media/ultron_media.py", "ultron_media.py")],  # the media hook lives with Vision
         "idle": True, "after": "litellm",
     },
     "launchd": {
@@ -267,7 +269,9 @@ def mapping(names):
         c = COMPONENTS[name]
         src = os.path.join(ROOT, c.get("src", name))
         if not c.get("tree"):
-            out += [(name, os.path.join(src, f), live(c["dst"] + "/" + f)) for f in c["files"]]
+            for f in c["files"]:
+                repo, f = (os.path.join(ROOT, f[0]), f[1]) if isinstance(f, tuple) else (os.path.join(src, f), f)
+                out.append((name, repo, live(c["dst"] + "/" + f)))
             continue
         rels = set()
         for base in (src, live(c["dst"])):
@@ -371,7 +375,7 @@ def cmd_render(out_dir, names):
         data = read(loc)
         if data is None:
             continue
-        rel = os.path.relpath(loc, os.path.join(ROOT, COMPONENTS[name].get("src", name)))
+        rel = os.path.relpath(dst, live(COMPONENTS[name]["dst"]))  # as laid out on the Mac
         p = os.path.join(out_dir, name, rel)
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "wb") as f:

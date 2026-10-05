@@ -302,6 +302,28 @@ def test_native_transcription_still_uses_multipart(monkeypatch, tmp_path):
     assert calls[1][0] == "/audio/transcriptions" and calls[1][1].startswith("multipart/")
 
 
+def test_audio_chat_prefix_transcribes_through_chat(monkeypatch, tmp_path):
+    # a model that makes images through /images but takes audio only in chat
+    monkeypatch.undo()
+    f = tmp_path / "media.json"
+    f.write_text(json.dumps({"transcribe": ["vendor/flash-lite", "whisper-1"], "audio_chat_prefixes": ["vendor/"]}))
+    monkeypatch.setattr(um, "CONF_FILE", str(f))
+    sent = []
+
+    def post(path, body, ctype, timeout):
+        sent.append(path)
+        return {"choices": [{"message": {"content": "hi"}}]}
+    monkeypatch.setattr(um, "_post", post)
+    assert um.transcribe(b"RIFFxxxx", "wav") == ("hi", "vendor/flash-lite") and sent == ["/chat/completions"]
+    assert not um._via_chat("vendor/flash-lite")  # images from the same vendor still use /images
+
+
+def test_direct_models_are_never_inspected(sandbox):
+    # the image judge gets two images and a prompt, which can read like an edit request
+    d = run(um.Media(), req("generate an image of a fox", model="ultron/judge"))
+    assert "mock_response" not in d and sandbox == []
+
+
 def test_defaults_are_plain_endpoint_ids():
     assert um.DEFAULTS["video"] and um.DEFAULTS["chat_prefixes"] == []
     # plain model names any OpenAI-compatible endpoint can serve, never one router's provider/model ids
@@ -322,13 +344,17 @@ def test_helper_confirm_asks_without_thinking(monkeypatch, reply, want):
         def read(self):
             return json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
 
+    sent_headers = []
+
     def urlopen(req, timeout):
         sent.append(json.loads(req.data))
+        sent_headers.append(dict(req.header_items()))
         return Resp()
     monkeypatch.setattr(um.urllib.request, "urlopen", urlopen)
     assert REAL_CONFIRM("Generate an image of a cat", "image") is want
     # with thinking on, the reasoning used up max_tokens and every reply was empty (= no)
     assert sent[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert sent_headers[0]["X-mtplx-cache-mode"] == "bypass"  # one-shot: mtplx shouldn't bank it
     assert "MEDIA or OTHER" in sent[0]["messages"][0]["content"]
 
 
