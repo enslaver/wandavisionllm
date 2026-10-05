@@ -306,11 +306,11 @@ h2 .aside{margin-left:auto;font-family:var(--mono);letter-spacing:0;text-transfo
 </section>
 
 <section id="lorasec">
-  <h2>LoRA <span class="aside" id="loraaside">captured traces → ~/lora/runs (lora/run.sh) → fused packs in ~/lora/packs · lora/README.md</span></h2>
+  <h2>LoRA <span class="aside" id="loraaside">captured traces → ~/lora/runs (lora/run.sh) → fused packs in ~/lora/packs; image LoRAs: GPU box → ~/lora/merges → forged in ~/.mtplx/models · lora/README.md</span></h2>
   <div class="lrow"><div id="loramodes"></div><div id="lstats"></div></div>
   <div class="llists">
-    <div class="rlist"><h3>Runs · ~/lora/runs</h3><div id="lruns"><div class="quiet">no runs yet</div></div></div>
-    <div class="rlist"><h3>Packs · ~/lora/packs</h3><div id="lpacks"><div class="quiet">no packs yet</div></div></div>
+    <div class="rlist"><h3>Runs · ~/lora/runs + ~/lora/merges</h3><div id="lruns"><div class="quiet">no runs yet</div></div></div>
+    <div class="rlist"><h3>Packs · ~/lora/packs + ~/.mtplx/models</h3><div id="lpacks"><div class="quiet">no packs yet</div></div></div>
   </div>
 </section>
 
@@ -403,7 +403,8 @@ function lamps(p){
   const swapFrac = m.swap_total ? m.swap_used/m.swap_total : 0;
   const pr = {1:"normal",2:"warn",4:"critical"}[m.pressure] || "?";
   L.push({n:"Memory", s: m.pressure>=4?"red": (m.pressure>=2||swapFrac>.85)?"amber":"green",
-    d:`${gb(avail)} free of ${gb(total)} · pressure ${pr} · swap ${gb(m.swap_used)}/${gb(m.swap_total)}`});
+    d:`${gb(avail)} free of ${gb(total)} · pressure ${pr} · swap ${gb(m.swap_used)}/${gb(m.swap_total)}`
+      + ((m.top_procs||[]).length ? ` · top: ${m.top_procs.slice(0,3).map(x=>`${x.name} ${gb(x.mem)}${x.cmprs>=2**30?` (+${gb(x.cmprs)} cmprs)`:""}`).join(", ")}` : "")});
   L.push({n:"GPU", s: m.gpu_util==null?"gray":"green",
     d: m.gpu_util==null ? "no ioreg reading" : `${m.gpu_util}% busy · ${gb(m.gpu_mem)} in use · load ${m.load.toFixed(1)}`
        + (snapM&&snapM.machine ? ` · ${snapM.machine.chip}` : "")});
@@ -1030,7 +1031,7 @@ function renderLora(l){
          a ? `${a.step!=null?`step ${a.step}/${a.of} · `:""}running ${a.etime}` : "no run.sh stage running",
          a && a.step!=null ? [[a.step,"var(--green)"],[Math.max(0,a.of-a.step),"#242a30"]] : null),
     tile("Serving", srv.length ? srv.map(([t,p])=>`${esc(t)} <small>${esc(p)}</small>`).join(" ") : `base <small>models</small>`,
-         srv.length ? "tier MODEL= points into ~/lora/packs" : "no tier serves a LoRA pack · see lora/README.md to deploy one"),
+         srv.length ? "tier MODEL= points at a LoRA pack" : "no tier serves a LoRA pack · see lora/README.md to deploy one"),
   );
   const tb=el("table","ltab"), hd=el("tr");
   for(const h of ["run","tier","ckpts","val loss base → best","repeat base → adapter","updated"]) hd.appendChild(el("th",null,h));
@@ -1038,6 +1039,7 @@ function renderLora(l){
   for(const r of l.runs||[]){
     const row=el("tr", a&&a.name===r.name?"live":null), td=(t,c)=>{ const x=el("td",c,t); row.appendChild(x); return x; };
     const n=td(null); n.appendChild(el("b",null,r.name)); if(r.of_run) n.appendChild(el("span","tag2",`${r.of_run} @ ${r.of_step}`));
+    if(r.where) n.appendChild(el("span","tag2","trained on "+r.where));
     const tc=td(r.tier||"?"); if(TC[r.tier]) tc.style.color=TC[r.tier];
     td(r.ckpts?`${r.ckpts}${r.iters?` / ${r.iters} it`:""}`:"–");
     td(r.val_base!=null?`${f3(r.val_base)} → ${f3(r.val_best)} @${r.val_best_step}`:"–", r.val_best!=null&&r.val_base!=null?(r.val_best<r.val_base?"good":"bad"):null);
@@ -1051,7 +1053,7 @@ function renderLora(l){
   for(const pk of (l.packs||[]).slice().reverse()){
     const inUse=srv.filter(([t,p])=>p===pk.name).map(([t])=>t);
     const row=el("div","rrow"+(inUse.length?" ok":"")); row.appendChild(el("span","tm",ago(pk.t).replace(" ago","")));
-    const tx=el("span","mt"); tx.append(el("b",null,pk.name), document.createTextNode(` · ${gb(pk.bytes)}`));
+    const tx=el("span","mt"); tx.append(el("b",null,pk.name), document.createTextNode(` · ${gb(pk.bytes)}${pk.from?` · forged from ${pk.from}`:""}`));
     tx.appendChild(el("span","tag2",inUse.length?"serving: "+inUse.join(","):"not deployed"));
     row.appendChild(tx); pf.appendChild(row);
   }

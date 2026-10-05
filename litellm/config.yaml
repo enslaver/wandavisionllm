@@ -43,5 +43,14 @@ litellm_settings:
     - ultron_rescue.proxy_handler_instance  # local tier wrote a ```bash block instead of a tool call -> tool_use (~/.ultron/rescue-mode)
     - prometheus                            # stock /metrics; aggregates per model (auth: master key)
   drop_params: true
+  # Prompt caching. Automatic breakpoints on the system prompt and the trailing turn; acts only on Claude
+  # deployments on anthropic/ bedrock/ vertex_ai/ azure_ai/ and stands down when the client marks its own
+  # (Claude Code does). The generated cloud/* entries carry cache_control_injection_points instead, so
+  # clients that don't mark (pi, Hermes) still cache the system prompt at a Claude upstream behind the
+  # cloud endpoint. Local tiers need nothing: LiteLLM strips cache_control for hosted_vllm, and mtplx
+  # (session bank) and TensorFold cache by prompt prefix on their own.
+  enable_anthropic_prompt_caching: true
+  # No use_chat_completions_url_for_anthropic_messages: it moves /v1/messages off /v1/responses for every
+  # openai/ deployment. ultron_admit.patch_omniroute_chat_bridge does that for the cloud endpoint only.
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Peak memory of one LoRA forward+backward at several sequence lengths.
     ~/lora/.venv/bin/python memprobe.py [model_dir | config.yaml] [lengths, e.g. 2048,4096,8192]
-A config.yaml (sonnet.yaml, opus.yaml) supplies the lora_parameters (rank, scale, keys); the model is
+A config.yaml (sonnet.yaml, opus.yaml, haiku.yaml) supplies the lora_parameters (rank, scale, keys); the model is
 LORA_BASE, else ~/lora/base/<config name>-4bit.
 """
 import os

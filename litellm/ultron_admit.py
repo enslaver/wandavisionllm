@@ -3,9 +3,13 @@
 LiteLLM pre-call hook, registered after loop_breaker. Local tiers first; when a request would
 need a model load that doesn't fit next to what's loaded (the llama-swap matrix), a NEW
 conversation goes to an OmniRoute combo (cloud/<tier>) instead of making llama-swap swap.
-Once a conversation has a backend it never changes (pins in ~/.litellm/pins.sqlite).
+Once a conversation has a backend it never changes (pins in ~/.litellm/pins.sqlite), with one
+exception: a cloud pin made by overflow (rule 4:overflow*) is soft. Each later request re-runs
+decide(), and once a local tier fits it re-pins local (rule repin:<rule>). Local first, cloud only
+while the Mac is full, back to local when there's room. Explicit cloud (x-route: cloud,
+route-mode cloud-only) stays a hard pin.
 
-Decision, first request of a conversation only:
+Decision, first request of a conversation (and every request on a soft overflow pin):
   1. tier loaded and its queue < max_waiting                        -> ultron/<tier>
   2. not loaded, fits (matrix) next to loaded + main pins, pressure normal -> ultron/<tier> (cold)
   3. substitute tier (tiers.conf `substitute`) loaded, queue ok    -> ultron/<substitute>
@@ -15,13 +19,15 @@ Decision, first request of a conversation only:
 Any local target that needs a load (rule 5, a pinned conversation whose tier was swapped out, a
 vision reroute) waits for the evicted tier's in-flight work: up to OVERFLOW_WAIT_S when cloud is
 allowed, then that one request goes to cloud/<tier> (pin unchanged); else up to EVICT_WAIT_MAX_S,
-then llama-swap swaps anyway. config.yaml falls cloud/<tier> back to ultron/<tier> on errors.
+then llama-swap swaps anyway. Cloud never falls back to local: overflow is one-way.
 A tier a main-thread conversation used within WARM_MAIN_S counts as in-flight: evicting it would
 kill a live session, so requests that would evict it overflow to cloud instead (2026-09-29).
 Memory guard (2026-09-30): while ultron is nearly swapping (see mem_guard) and cloud is allowed, a
-new conversation pins cloud/<tier> (rule 4:overflow:mem) and a request of a conversation pinned
-local goes to cloud/<tier> (overflow=mem), that request only: the pin stays, so it comes back
-once memory recovers. Held MEM_HOLD_S after the last trigger so it doesn't flap.
+new conversation pins cloud/<tier> (rule 4:overflow:mem, a soft pin) and a request of a conversation
+pinned local goes to cloud/<tier> (overflow=mem), that request only: the pin stays, so it comes back
+once memory recovers. Held MEM_HOLD_S after the last trigger, then until headroom is back over
+MEM_CLEAR_GB, so it doesn't flap. Kernel pressure "warn" doesn't trip it (only critical does): with
+three tiers resident a Mac reads warn all day while the tiers sit idle.
 Memory gate (2026-10-01): a local request that can't go to cloud (local-only, x-route: private)
 waits until no other tier is serving one (wait_for_other_tiers): two tiers prefilling at once ran
 Metal out.
@@ -36,6 +42,9 @@ Vision (every mode but off): a tier with `vision = no` in tiers.conf silently ig
 request whose newest turn carries an image and would go to such a tier goes to the [routing]
 vision tier instead, this request only (the pin is unchanged). Images in older turns are replaced
 with a text note so the model doesn't invent them.
+A tiers.conf model with `routed = no` (the image judge) is only ever asked for by name. It has no
+cloud twin and isn't pinned; loading it unloads a tier, so in enforce mode its request first waits
+for that tier to go idle, then for the memory gate (admit_direct). A loaded one never blocks a fit.
 Tiers, their model ids, queue limits, substitutes and cloud overflow: tiers.conf (ultron_tiers.py).
 Which agent sent a request (logged for Wanda): agents.conf.
 Design notes: docs/architecture.md and litellm/README.md.
@@ -44,6 +53,7 @@ Design notes: docs/architecture.md and litellm/README.md.
 from __future__ import annotations
 
 import asyncio
+import base64
 import configparser
 import fnmatch
 import hashlib
@@ -52,7 +62,9 @@ import os
 import re
 import sqlite3
 import subprocess
+import tempfile
 import time
+import urllib.parse
 import urllib.request
 from collections import OrderedDict
 from itertools import product
@@ -62,12 +74,20 @@ import ultron_tiers
 
 PIN_IDLE_S = {"main": 3600, "sub": 1800}
 EVICT_WAIT_MAX_S = 300  # local only: wait at most this long for a tier to go idle, then swap (< client timeouts)
-OVERFLOW_WAIT_S = 60  # cloud allowed: after this long, this one request goes to cloud/<tier> instead
+# Cloud is the last resort: a new conversation joins a local queue up to the tier's max_waiting (tiers.conf,
+# default 20), and a reload waits out the evicted tier's work up to OVERFLOW_WAIT_S before one request spills.
+OVERFLOW_WAIT_S = 300  # cloud allowed: after this long, this one request goes to cloud/<tier> instead
+SOFT_PIN_RULES = ("4:overflow",)  # cloud pins that move back to local once it fits
 PENDING_LOAD_S = 120  # in-process reservation for a cold load that isn't in /running yet
 WARM_MAIN_S = 300  # a tier with a main conversation used within this window is live: never evict it (session-bank idle TTL)
 MEM_LOW_GB = float(os.environ.get("ULTRON_MEM_LOW_GB", "4"))  # headroom under this = nearly swapping (0: check off)
 SWAPOUT_MB_S = float(os.environ.get("ULTRON_SWAPOUT_MB_S", "16"))  # swap-out rate that counts as swapping (0: check off)
-MEM_HOLD_S = 120  # stay on cloud this long after the last trigger (KV caches free slowly; no flapping)
+MEM_HOLD_S = 20  # stay on cloud at least this long after the last trigger (a fixed 120 s sent 36 of 85 requests in an hour to cloud while every tier sat idle)
+MEM_CLEAR_GB = float(os.environ.get("ULTRON_MEM_CLEAR_GB", "5"))  # ...and until headroom is back over this (three idle tiers leave ~4.5-6 GB on 64 GB)
+# Kernel pressure level that trips the guard: 4 = critical. Level 2 (warn) is what a 64 GB Mac reads all day with
+# three tiers resident (274 of 300 decisions once went to cloud on "pressure 2" while the tiers sat idle), so warn
+# only blocks cold loads (decide rule 2), never requests for a tier that is already loaded.
+MEM_PRESSURE_TRIP = int(os.environ.get("ULTRON_PRESSURE_TRIP", "4"))
 MEM_WAIT_MAX_S = float(os.environ.get("ULTRON_MEM_WAIT_S", "300"))  # local only: wait at most this long for other tiers (0: off)
 MEM_SEND_S = 3.0  # a request the memory gate let through counts as busy this long (after its tier finishes loading), until its backend shows it
 
@@ -486,11 +506,12 @@ def decide(tier: str, state: dict[str, Any], reserved: set[str], x_route: str, m
     tight = state.get("mem_tight")
     if tight and not private and mode != "local-only" and cloud:  # any local start grows a KV cache toward swap
         return f"cloud/{tier}", "4:overflow:mem"
-    loaded = {t for t, i in state["tiers"].items() if i.get("state") in ("ready", "starting")}
+    conf = tiers().tier
+    # A loaded routed = no model (the judge) never blocks a fit: llama-swap unloads it for any tier.
+    loaded = {t for t, i in state["tiers"].items()
+              if i.get("state") in ("ready", "starting") and (conf.get(t) or {}).get("routed", True)}
     reserved = {t for t in reserved if t in loaded}  # a pin only reserves memory while its tier is resident
     info = state["tiers"].get(tier)
-
-    conf = tiers().tier
 
     def queue_ok(t: str) -> bool:
         i = state["tiers"].get(t) or {}
@@ -549,12 +570,12 @@ class Admission:
         return s
 
     def mem_guard(self, m: dict[str, Any]) -> str | None:
-        """Why ultron is (nearly) swapping, or None: pressure warn/critical, headroom under
+        """Why ultron is (nearly) swapping, or None: pressure critical (MEM_PRESSURE_TRIP), headroom under
         MEM_LOW_GB, or swap-outs of SWAPOUT_MB_S+ since the last sample (<= 30 s ago). Held for
-        MEM_HOLD_S after the last trigger."""
+        MEM_HOLD_S after the last trigger, then until headroom is back over MEM_CLEAR_GB (hysteresis)."""
         now = m.get("t") or time.time()
         why = None
-        if int(m.get("pressure") or 1) >= 2:
+        if int(m.get("pressure") or 1) >= MEM_PRESSURE_TRIP:
             why = f"pressure {m['pressure']}"
         elif m.get("headroom") is not None and m["headroom"] < MEM_LOW_GB * 2**30:
             why = f"headroom {m['headroom'] / 2**30:.1f}G"
@@ -566,7 +587,13 @@ class Admission:
                 why = f"swapping {rate:.0f}MB/s"
         if why:
             self._mem_tight = (now + MEM_HOLD_S, why)
-        return self._mem_tight[1] if self._mem_tight and now < self._mem_tight[0] else None
+        if not self._mem_tight:
+            return None
+        head = m.get("headroom")
+        if now < self._mem_tight[0] or (head is not None and head < MEM_CLEAR_GB * 2**30):
+            return self._mem_tight[1]
+        self._mem_tight = None
+        return None
 
     async def wait_for_evictees(self, tier: str, sets, costs, cid: str | None = None,
                                 max_s: float = EVICT_WAIT_MAX_S, warm: set[str] = ()) -> list[str]:
@@ -619,6 +646,34 @@ class Admission:
         finally:
             self.mem_queue.pop(ticket, None)
 
+    async def admit_direct(self, data: dict[str, Any], call_type: str, mode: str, tier: str) -> dict[str, Any]:
+        """A routed = no model (the image judge): no cloud twin, no pin, and loading it unloads a tier. In
+        enforce mode it waits like a local-only reload: for the tier it evicts to be idle and unused by a main
+        conversation for WARM_MAIN_S (else it kills a live session), then for the memory gate. Each wait
+        gives up after its limit and the request goes anyway."""
+        cid, now = data.get("litellm_call_id"), time.time()
+        waited, mem_wait = [], None
+        if mode == "enforce":
+            sets, costs = matrix()
+            waited = await self.wait_for_evictees(tier, sets, costs, cid, EVICT_WAIT_MAX_S,
+                                                  self._pins().warm_main_tiers(mode, now))
+            if MEM_WAIT_MAX_S > 0:
+                t0 = time.time()
+                still = await self.wait_for_other_tiers(tier, cid, MEM_WAIT_MAX_S)
+                mem_wait = {"s": round(time.time() - t0, 1), "gave_up_on": still or None}
+        requested, target = data.get("model"), f"ultron/{tier}"
+        data["model"] = target  # a bare name or alias -> the canonical id
+        decision = {"ts": now, "mode": mode, "applied": True, "requested": requested, "tier": tier, "target": target,
+                    "endpoint": target, **client_info(data), "rule": "direct", "new": False, "call_type": call_type,
+                    "busy_evictees_after_wait": waited or None, "mem_wait": mem_wait, "call_id": cid}
+        _log(decision)
+        if cid:
+            self.recent[cid] = (f"{target}; rule=direct" + (f"; evicted-busy={','.join(waited)}" if waited else "")
+                                + (f"; mem-wait={mem_wait['s']}s" if mem_wait and mem_wait["s"] >= 1 else ""))
+            while len(self.recent) > 512:
+                self.recent.popitem(last=False)
+        return decision
+
     async def admit(self, data: dict[str, Any], call_type: str, mode: str) -> dict[str, Any] | None:
         model = data.get("model")
         tier = tier_for(str(model or ""))
@@ -626,6 +681,8 @@ class Admission:
             return None  # a mock reply (loop_breaker, ultron_media) needs no backend, so no eviction wait
         if str(model or "").startswith("media/"):
             return None  # cloud image/audio/embedding entries: not a tier, and tier_for() would give the default tier
+        if tier and not tiers().tier[tier]["routed"]:
+            return await self.admit_direct(data, call_type, mode, tier)
         if tier is None:  # the client asked for cloud/<tier> itself: no decision, but log the traffic
             ctier = str(model).split("/", 1)[1] if "/" in str(model) else "?"
             _log({"ts": time.time(), "mode": mode, "applied": True, "requested": model, "tier": ctier, "target": model,
@@ -645,17 +702,24 @@ class Admission:
             pin = pins.get(pin_mode, ident["key"])
             st = own_view(await self.state(), data.get("litellm_call_id"))
             sets, costs = matrix()
-            if pin:
+            back = None
+            if pin is None or pin["rule"].startswith(SOFT_PIN_RULES):
+                self.pending = {t: ts for t, ts in self.pending.items() if now - ts < PENDING_LOAD_S}
+                reserved = pins.main_local_tiers(pin_mode) | set(self.pending)
+                back = decide(tier, st, reserved, x_route, rmode, sets)
+                if pin is not None and not back[0].startswith("ultron/"):
+                    back = None  # still full: the overflow pin stands
+            if back is None:
                 target, rule, new = pin["target"], "pinned:" + pin["rule"], False
                 pins.touch(pin_mode, ident["key"], now)
             else:
-                self.pending = {t: ts for t, ts in self.pending.items() if now - ts < PENDING_LOAD_S}
-                reserved = pins.main_local_tiers(pin_mode) | set(self.pending)
-                target, rule = decide(tier, st, reserved, x_route, rmode, sets)
-                new = True
+                target, rule = back
+                new = pin is None
                 if target.startswith("ultron/") and target.split("/")[1] not in st["tiers"]:
                     self.pending[target.split("/")[1]] = now
                 pins.put(pin_mode, ident["key"], target, tier, ident["main"], ident["session"], rule, now)
+                if not new:
+                    rule = "repin:" + rule
         explicit = rule.startswith(("x-route:", "route-mode:")) or (not new and pin["rule"].startswith(("x-route:", "route-mode:")))
         apply = mode == "enforce" or explicit
         # Vision applies in shadow mode too: a no-vision tier would silently ignore the image.
@@ -760,11 +824,22 @@ class UltronAdmit(CustomLogger):  # type: ignore[misc,valid-type]
             t = _local_tier(kwargs)
             if isinstance(kwargs.get("messages"), list):
                 kwargs["messages"] = repair_split_tool_calls(kwargs["messages"])
+            if t and isinstance(kwargs.get("messages"), list) and has_docs(kwargs["messages"]):
+                kwargs["messages"] = await asyncio.to_thread(docs_to_text, kwargs["messages"])  # osascript: off the loop
             if t and isinstance(kwargs.get("messages"), list):
                 kwargs["messages"] = normalize_history(kwargs["messages"], think_in_content=t["think_in_content"])
         except Exception as exc:  # never fail a request because of this
             _log({"ts": time.time(), "error": "history: " + repr(exc)})
             return kwargs
+        try:
+            cid = kwargs.get("litellm_call_id") or ""
+            why = t and one_shot(kwargs.get("messages"), kwargs.get("tools"), self.admission.recent.get(cid, ""))
+            if why:
+                kwargs["extra_headers"] = {**(kwargs.get("extra_headers") or {}), **CACHE_BYPASS}
+                if cid in self.admission.recent and "bank=off" not in self.admission.recent[cid]:  # hook can run twice per /v1/messages
+                    self.admission.recent[cid] += f"; bank=off({why})"
+        except Exception as exc:
+            _log({"ts": time.time(), "error": "bypass: " + repr(exc)})
         try:
             if t and kwargs.get("tools") and trace_on():
                 key = self.admission.keys.get(kwargs.get("litellm_call_id") or "") or _fallback_key(kwargs["messages"], t["name"])
@@ -794,6 +869,24 @@ def _local_tier(kwargs: dict[str, Any]) -> dict[str, Any] | None:
     if SWAP.split("//")[-1] not in str(kwargs.get("api_base") or ""):
         return None
     return tiers().tier.get(str(kwargs.get("model") or "").split("/")[-1])
+
+
+# mtplx keeps every finished request's KV as a warm session in its session bank. A request that is never
+# continued only costs memory there: the helper tier grew ~85 MB per one-shot vision request, past its 5G
+# MTPLX_SESSION_BANK_MAX_BYTES cap, until Metal ran out (with this header 80 requests grew it 0.01 GB instead
+# of 6 GB). The media hook's helper check sends the same header. Servers other than mtplx ignore it.
+CACHE_BYPASS = {"x-mtplx-cache-mode": "bypass"}
+
+
+def one_shot(messages: Any, tools: Any, route_note: str = "") -> str | None:
+    """Why a local request won't be continued on this tier (so mtplx shouldn't bank it), else None.
+    single-turn: no tools and no assistant turn yet (Claude Code titles/summaries, suite probes, chat one-offs).
+    vision: a newest-turn image rerouted off a no-vision tier; the conversation itself lives on that tier."""
+    if "vision->" in route_note:
+        return "vision"
+    if not tools and not any(isinstance(m, dict) and m.get("role") == "assistant" for m in messages or []):
+        return "single-turn"
+    return None
 
 
 def _text(content: Any) -> str:
@@ -865,6 +958,105 @@ def normalize_history(messages: list[Any], think_in_content: bool = False) -> li
             out.append(_think_in_content(m))
         else:
             out.append(m)
+    return out
+
+
+# ----------------------------------------------------------------------------- documents
+# Claude Code's Read tool returns a PDF as an Anthropic document block. LiteLLM's /v1/messages bridge turns
+# it into an image_url part holding a data:application/pdf URL, and mtplx answers 400 "cannot decode image:
+# cannot identify image file", on every later request too since the PDF stays in history. For local tiers, a
+# non-image data URL (image_url part, or chat "file" part) becomes text: PDFs through macOS PDFKit via
+# osascript (the system Python has no PDF library), text/* decoded, anything else a note.
+DOC_MAX_CHARS = 200_000  # ~50k tokens; past it the model is told to read fewer pages at a time
+DOC_TYPES = ("image_url", "file")
+PDF_JXA = r"""
+ObjC.import('PDFKit');
+function run(argv) {
+  var d = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(argv[0]));
+  if (d.isNil() || d.isLocked) return '';
+  var out = [];
+  for (var i = 0; i < d.pageCount; i++) {
+    var s = d.pageAtIndex(i).string;
+    out.push('--- page ' + (i + 1) + ' ---\n' + (s.isNil() ? '' : s.js));
+  }
+  return out.join('\n\n');
+}
+"""
+_doc_cache: OrderedDict[str, str] = OrderedDict()  # sha1 of the data URL -> text (the same text each request keeps mtplx's prefix cache)
+
+
+def _doc_url(part: Any) -> str | None:
+    """The data URL of a non-image, non-video attachment part (what mtplx can't take), else None."""
+    if not isinstance(part, dict) or part.get("type") not in DOC_TYPES:
+        return None
+    if part["type"] == "image_url":
+        u = part.get("image_url")
+        u = u.get("url") if isinstance(u, dict) else u
+    else:
+        f = part.get("file")
+        u = f.get("file_data") if isinstance(f, dict) else None
+    if not isinstance(u, str) or not u.startswith("data:") or u.startswith(("data:image/", "data:video/")):
+        return None
+    return u
+
+
+def has_docs(messages: Any) -> bool:
+    return any(isinstance(m, dict) and isinstance(m.get("content"), list) and any(_doc_url(b) for b in m["content"])
+               for m in messages or [])
+
+
+def pdf_text(data: bytes) -> str:
+    """Per-page text of a PDF ('' when it has no text layer, is locked, or this isn't macOS)."""
+    fd, path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        r = subprocess.run(["osascript", "-l", "JavaScript", "-e", PDF_JXA, path], capture_output=True, timeout=120)
+        return r.stdout.decode("utf-8", "replace").strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    finally:
+        os.unlink(path)
+
+
+def doc_text(url: str) -> str:
+    key = hashlib.sha1(url.encode()).hexdigest()
+    if key in _doc_cache:
+        _doc_cache.move_to_end(key)
+        return _doc_cache[key]
+    head, _, payload = url.partition(",")
+    mime = head[5:].split(";")[0] or "application/octet-stream"
+    try:
+        data = base64.b64decode(payload) if ";base64" in head else urllib.parse.unquote_to_bytes(payload)
+    except ValueError:
+        data = b""
+    if mime == "application/pdf":
+        body = pdf_text(data)
+        pages = body.count("--- page ")
+        if not re.sub(r"--- page \d+ ---", "", body).strip():
+            text = f"[{mime} attachment: no text layer (scanned?) and this model can't read PDFs directly]"
+        else:
+            text = f"[{mime} attachment, {pages} page(s), converted to text]\n{body}"
+    elif mime.startswith("text/") or mime in ("application/json", "application/xml"):
+        text = f"[{mime} attachment]\n" + data.decode("utf-8", "replace")
+    else:
+        text = f"[{mime} attachment omitted: local models read only text and images]"
+    if len(text) > DOC_MAX_CHARS:
+        text = text[:DOC_MAX_CHARS] + f"\n[truncated at {DOC_MAX_CHARS} characters: read fewer pages at a time]"
+    _doc_cache[key] = text
+    while len(_doc_cache) > 16:
+        _doc_cache.popitem(last=False)
+    return text
+
+
+def docs_to_text(messages: list[Any]) -> list[Any]:
+    """Attachment parts mtplx can't decode (see above) -> text parts. Messages without any are kept as is."""
+    out = []
+    for m in messages:
+        c = m.get("content") if isinstance(m, dict) else None
+        if isinstance(c, list) and any(_doc_url(b) for b in c):
+            m = {**m, "content": [{"type": "text", "text": doc_text(_doc_url(b))} if _doc_url(b) else b for b in c]}
+        out.append(m)
     return out
 
 
@@ -956,6 +1148,49 @@ def patch_blank_delta_blocks() -> bool:
 
 
 BLANK_DELTA_PATCHED = patch_blank_delta_blocks()
+
+
+# ----------------------------------------------------------------------------- cloud /v1/messages bridge
+# LiteLLM 1.102.1 sends /v1/messages for an openai/ deployment to the upstream /v1/responses. OmniRoute's
+# /v1/responses drops `name` from gemini function_call items, so the client gets a tool_use with the right
+# input and name "" (a coding agent via cloud/sonnet, 2026-10-02). It also adds its memory_* tools there in
+# chat format, which some upstreams reject (422 "tools[1]: missing field `name`"). /v1/chat/completions has
+# neither bug, and it is what every OpenAI-compatible endpoint serves, so /v1/messages to the cloud endpoint
+# (OMNIROUTE_BASE) takes LiteLLM's chat bridge. Other openai/ bases keep /v1/responses
+# (litellm.use_chat_completions_url_for_anthropic_messages would move all). ULTRON_CHAT_BRIDGE=off: LiteLLM's default.
+def chat_bridge(api_base: Any) -> bool:
+    if os.environ.get("ULTRON_CHAT_BRIDGE", "on").strip().lower() in ("off", "0", "no", "false"):
+        return False
+    cloud = urllib.parse.urlsplit(os.environ.get("OMNIROUTE_BASE") or "").netloc
+    return bool(cloud) and urllib.parse.urlsplit(str(api_base or "")).netloc == cloud
+
+
+def patch_omniroute_chat_bridge() -> bool:
+    """Send /v1/messages for the cloud endpoint's deployments through chat/completions. Idempotent."""
+    try:
+        from litellm.llms.anthropic.experimental_pass_through.adapters.handler import (
+            LiteLLMMessagesToCompletionTransformationHandler as ChatBridge,
+        )
+        from litellm.llms.anthropic.experimental_pass_through.responses_adapters.handler import (
+            LiteLLMMessagesToResponsesAPIHandler as ResponsesBridge,
+        )
+        orig = ResponsesBridge.anthropic_messages_handler
+    except Exception:  # tests without litellm, or a LiteLLM that moved it
+        return False
+    if getattr(orig, "_ultron", False):
+        return True
+
+    def anthropic_messages_handler(*args, **kwargs):
+        if chat_bridge(kwargs.get("api_base")):  # both bridges take the same arguments at the one call site
+            return ChatBridge.anthropic_messages_handler(*args, **kwargs)
+        return orig(*args, **kwargs)
+
+    anthropic_messages_handler._ultron = True  # type: ignore[attr-defined]
+    ResponsesBridge.anthropic_messages_handler = staticmethod(anthropic_messages_handler)
+    return True
+
+
+CHAT_BRIDGE_PATCHED = patch_omniroute_chat_bridge()
 
 
 # ----------------------------------------------------------------------------- tool schemas

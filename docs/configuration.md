@@ -15,6 +15,7 @@ Three kinds of settings, kept apart on purpose:
 | `WANDAVISION_HOSTNAME` | `localhost` | fills `__HOSTNAME__` in `caddy/Caddyfile`: the HTTPS site name |
 | `WANDAVISION_HOST` | empty | ssh host to deploy to; empty = this machine |
 | `WANDAVISION_REMOTE_ROOT` | this repo's path | where the repo lives on `WANDAVISION_HOST` |
+| `GPU_BOX_HOSTNAME` | `localhost` | `gpu-box/deploy.py` only: fills `__HOSTNAME__` in `gpu-box/caddy/Caddyfile`, the GPU box's HTTPS site name |
 
 Environment variables with the same names override the file. `__HOME__` is always your home
 directory. `./deploy.py render DIR` writes the filled-in files to `DIR` so you can review them.
@@ -31,6 +32,9 @@ Template: [`litellm/env.example`](../litellm/env.example).
 | `ULTRON_MEDIA_PUBLIC` | public base URL for generated media (`https://your-mac…/media`) |
 | `ULTRON_ADMIT_MODE`, `LOOP_BREAKER_MODE`, `ULTRON_MEDIA_MODE`, `ULTRON_RESCUE_MODE` | fallbacks when the mode files are missing |
 | `ULTRON_MEM_LOW_GB`, `ULTRON_SWAPOUT_MB_S` | memory guard thresholds; 0 turns a check off |
+| `ULTRON_MEM_CLEAR_GB` | once tripped, the memory guard holds until headroom is back over this (5) |
+| `ULTRON_PRESSURE_TRIP` | kernel pressure level that trips the memory guard: 4 = critical (default), 2 = warn |
+| `ULTRON_CHAT_BRIDGE` | `on` (default): `/v1/messages` to the cloud endpoint go through LiteLLM's chat-completions bridge; `off`: LiteLLM's `/v1/responses` bridge |
 | `ULTRON_MEM_WAIT_S` | memory gate: how long a local-only request waits for other tiers to finish (300; 0 = off) |
 
 ## Live switches
@@ -68,6 +72,7 @@ Every response carries `x-ultron-route` with the decision and its reason.
 | `ultron/opus`, `claude-opus-*`, `opus` | opus |
 | `ultron/sonnet`, `claude-sonnet-*`, `claude-*` (anything else Claude), `sonnet` | sonnet |
 | `ultron/haiku`, `claude-haiku-*`, `haiku` | haiku |
+| `ultron/judge`, `judge` | the image judge (`routed = no`: only by name, never a fallback for other ids) |
 | `cloud/<tier>` for each tier with `cloud =` | straight to the cloud overflow model |
 | `media/image`, `media/image-edit`, `media/embed` | OmniRoute image, edit, embedding endpoints |
 
@@ -96,6 +101,10 @@ Tier names never change, so clients and LiteLLM don't either.
   file), give it a script `mtplx/bin/tier-<name>.sh`, add it to `resident`, and `./deploy.py push`.
   deploy.py builds the llama-swap and LiteLLM entries from `tiers.conf`; the hooks and Wanda read it
   directly. Other runtimes: [`mtplx/bin/examples/`](../mtplx/bin/examples/README.md).
+- **A helper model that isn't a tier** (like the image judge): the same, plus `routed = no` in its
+  section. Clients reach it only as `ultron/<name>`; it never takes a conversation, has no cloud
+  overflow, and any tier may unload it. Give it a slot in `resident` the way `[judge]` shares the big
+  tier's: `(fable | opus | judge) & sonnet & haiku`.
 
 ## Running without a cloud provider
 

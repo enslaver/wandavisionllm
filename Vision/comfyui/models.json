@@ -1,0 +1,94 @@
+{
+ "_": "models the Vision workflows need, under <base>/models/<dir>; base = extra_model_paths.yaml base_path. size is the remote Content-Length; urls come from ComfyUI's own workflow templates (2026-10-03).",
+ "models": [
+  {
+   "group": "image",
+   "dir": "diffusion_models",
+   "name": "z_image_turbo_bf16.safetensors",
+   "size": 12309866400,
+   "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors",
+   "for": "zimage-turbo-generate"
+  },
+  {
+   "group": "image",
+   "dir": "text_encoders",
+   "name": "qwen_3_4b.safetensors",
+   "size": 8044982048,
+   "url": "https://huggingface.co/Comfy-Org/flux2-klein/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors",
+   "for": "zimage-turbo-generate"
+  },
+  {
+   "group": "image",
+   "dir": "vae",
+   "name": "ae.safetensors",
+   "size": 335304388,
+   "url": "https://huggingface.co/Comfy-Org/HiDream-I1_ComfyUI/resolve/main/split_files/vae/ae.safetensors",
+   "for": "zimage-turbo-generate"
+  },
+  {
+   "group": "image",
+   "dir": "diffusion_models",
+   "name": "flux-2-klein-9b-fp8.safetensors",
+   "size": 9433061528,
+   "url": "https://huggingface.co/black-forest-labs/FLUX.2-klein-9b-fp8/resolve/main/flux-2-klein-9b-fp8.safetensors",
+   "for": "flux2-klein-edit",
+   "gated": true
+  },
+  {
+   "group": "image",
+   "dir": "text_encoders",
+   "name": "qwen_3_8b_fp8mixed.safetensors",
+   "size": 8664848742,
+   "url": "https://huggingface.co/Comfy-Org/flux2-klein-9B/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors",
+   "for": "flux2-klein-edit"
+  },
+  {
+   "group": "image",
+   "dir": "vae",
+   "name": "full_encoder_small_decoder.safetensors",
+   "size": 249519092,
+   "url": "https://huggingface.co/black-forest-labs/FLUX.2-small-decoder/resolve/main/full_encoder_small_decoder.safetensors",
+   "for": "flux2-klein-edit"
+  },
+  {
+   "group": "video",
+   "dir": "diffusion_models",
+   "name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+   "size": 20970379616,
+   "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+   "for": "minimax-h3-t2v"
+  },
+  {
+   "group": "video",
+   "dir": "text_encoders",
+   "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "size": 15687142551,
+   "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+   "for": "minimax-h3-t2v"
+  },
+  {
+   "group": "video",
+   "dir": "vae",
+   "name": "minimax_h3_video_vae_int8_convrot.safetensors",
+   "size": 2811065184,
+   "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors",
+   "for": "minimax-h3-t2v"
+  },
+  {
+   "group": "video",
+   "dir": "vae",
+   "name": "minimax_h3_audio_vae_fp32.safetensors",
+   "size": 605254808,
+   "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors",
+   "for": "minimax-h3-t2v"
+  },
+  {
+   "group": "video",
+   "dir": "loras",
+   "name": "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+   "size": 1956193000,
+   "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+   "for": "minimax-h3-t2v"
+  }
+ ]
+}

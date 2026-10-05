@@ -20,7 +20,10 @@ SWAP_API = "http://127.0.0.1:8001/v1"   # llama-swap (launchd/com.llama-swap.pli
 COLORS = ["#c39bd3", "#88c0d0", "#a3be8c", "#ebcb8b", "#d08770", "#b48ead", "#8fbcbb"]
 
 TIER_KEYS = {"script", "ttl", "preload", "evict_cost", "context", "vision", "chat_only", "think_in_content",
-             "timeout", "upstream_model", "max_waiting", "substitute", "match", "advertise", "cloud", "color"}
+             "timeout", "upstream_model", "max_waiting", "substitute", "match", "advertise", "cloud", "color", "routed"}
+# routed = no: a model llama-swap serves next to the tiers (the image judge) that is only ever asked
+# for by name (ultron/<name>). These keys would route requests to it, so they're refused there.
+ROUTING_ONLY_KEYS = ("substitute", "match", "advertise", "cloud")
 ROUTING_KEYS = {"default", "resident", "vision", "helper"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
@@ -66,12 +69,13 @@ class Tiers:
                     "think_in_content": _bool(s.get("think_in_content"), False),
                     "timeout": int(s.get("timeout") or 0),
                     "upstream_model": (s.get("upstream_model") or "").strip(),
-                    "max_waiting": int(s.get("max_waiting") or 1),
+                    "max_waiting": int(s.get("max_waiting") or 20),
                     "substitute": (s.get("substitute") or "").strip() or None,
                     "match": [g.lower() for g in _list(s.get("match"))],
                     "advertise": _list(s.get("advertise")),
                     "cloud": (s.get("cloud") or "").strip() or None,
                     "color": (s.get("color") or "").strip() or COLORS[i % len(COLORS)],
+                    "routed": _bool(s.get("routed"), True),
                 }
             except ValueError as e:
                 self.problems.append(f"[{name}]: {e}")
@@ -79,12 +83,12 @@ class Tiers:
         for k in r:
             if k not in ROUTING_KEYS:
                 self.problems.append(f"[routing] {k}: unknown key")
-        first = self.names[0] if self.names else None
-        self.default = (r.get("default") or "").strip() or first
+        routed = self.routed()
+        self.default = (r.get("default") or "").strip() or (routed[0] if routed else None)
         self.resident = (r.get("resident") or "").strip() or " | ".join(self.names)
         self.vision_tier = ((r.get("vision") or "").strip()
-                            or next((n for n in self.names if self.tier.get(n, {}).get("vision")), None))
-        self.helper = (r.get("helper") or "").strip() or (self.names[-1] if self.names else None)
+                            or next((n for n in routed if self.tier[n]["vision"]), None))
+        self.helper = (r.get("helper") or "").strip() or (routed[-1] if routed else None)
         self._check()
 
     def _check(self) -> None:
@@ -95,12 +99,21 @@ class Tiers:
         for what, v in (("default", self.default), ("vision", self.vision_tier), ("helper", self.helper)):
             if v and v not in known:
                 self.problems.append(f"[routing] {what} = {v}: no such tier")
+            elif v and not self.tier.get(v, {}).get("routed", True):
+                self.problems.append(f"[routing] {what} = {v}: that tier has routed = no")
+        for n, t in self.tier.items():
+            if not t["routed"]:
+                for k in ROUTING_ONLY_KEYS:
+                    if t[k]:
+                        self.problems.append(f"[{n}] {k}: not allowed with routed = no")
         for atom in re.findall(r"[A-Za-z0-9._/-]+", self.resident):
             if atom not in known:
                 self.problems.append(f"[routing] resident: {atom} is not a tier")
         for n, t in self.tier.items():
             if t["substitute"] and t["substitute"] not in known:
                 self.problems.append(f"[{n}] substitute = {t['substitute']}: no such tier")
+            elif t["substitute"] and not self.tier.get(t["substitute"], {}).get("routed", True):
+                self.problems.append(f"[{n}] substitute = {t['substitute']}: that tier has routed = no")
             if t["substitute"] == n:
                 self.problems.append(f"[{n}] substitute: a tier can't substitute for itself")
         seen: dict[str, str] = {}
@@ -126,6 +139,10 @@ class Tiers:
             if fnmatch.fnmatchcase(m, g):
                 return n
         return self.default
+
+    def routed(self) -> list[str]:
+        """Tiers requests can be routed to (every tier but those with routed = no), in file order."""
+        return [n for n in self.names if self.tier.get(n, {}).get("routed", True)]
 
     def no_vision(self) -> list[str]:
         return [n for n, t in self.tier.items() if not t["vision"]]
@@ -166,6 +183,7 @@ def _q(s: str) -> str:
 
 
 def _local_entry(model_name: str, t: dict[str, Any]) -> list[str]:
+    what = "tier" if t["routed"] else "model, asked for by name only"
     out = [f"- model_name: {_q(model_name)}",
            "  litellm_params:",
            f"    model: {_q('hosted_vllm/' + t['name'])}",
@@ -178,7 +196,7 @@ def _local_entry(model_name: str, t: dict[str, Any]) -> list[str]:
                 f"    stream_timeout: {t['timeout']}   # until the first streamed token (a cold long prefill sends nothing)"]
     out += ["  model_info:",
             f"    max_input_tokens: {t['context']}",
-            f"    description: {_q('local ' + t['name'] + ' tier (llama-swap)')}"]
+            f"    description: {_q('local ' + t['name'] + ' ' + what + ' (llama-swap)')}"]
     return out
 
 
@@ -207,11 +225,15 @@ def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
                    f"    model: {_q('openai/' + c)}   # openai/ = OpenAI-compatible; the rest is the endpoint's model id",
                    '    api_base: "os.environ/OMNIROUTE_BASE"',
                    '    api_key: "os.environ/OMNIROUTE_KEY"',
+                   "    cache_control_injection_points: [{location: message, role: system}]   # see litellm_settings",
                    "  model_info:",
                    f"    max_input_tokens: {t.tier[n]['context']}",
                    f"    description: {_q('cloud overflow for the ' + n + ' tier (' + c + ')')}"]
-    fb = (["fallbacks:   # cloud/<tier> errors -> the same local tier (llama-swap loads it if needed)"]
-          + [f"  - {{\"cloud/{n}\": [\"ultron/{n}\"]}}" for n in clouds]) if clouds else ["fallbacks: []"]
+    # No cloud -> local fallbacks: overflow is one-way (local -> cloud) and ultron_admit decides it. A
+    # cloud/<tier> -> ultron/<tier> fallback re-ran every failed cloud call on the local tier, ignoring
+    # route-mode cloud-only: with the endpoint failing (a LiteLLM started without OMNIROUTE_KEY), every
+    # cloud request was served locally.
+    fb = ["fallbacks: []   # cloud never falls back to local; see ultron_tiers.blocks()"]
     alias = ["model_group_alias:   # bare tier names keep working, not listed in /v1/models"]
     alias += [f"  {n}: {{model: \"ultron/{n}\", hidden: true}}" for n in names]
     slow = [n for n in names if t.tier[n]["timeout"]]
@@ -229,7 +251,9 @@ def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
                "    checkEndpoint: /health",
                f"    ttl: {x['ttl']}" + ("   # never unload" if x["ttl"] == 0 else "")]
         if x["upstream_model"]:
-            sw.append(f"    useModelName: {_q(x['upstream_model'])}   # the name the server answers to")
+            um = x["upstream_model"]
+            um = home + um[1:] if um.startswith("~/") else um  # a model path (mlx_vlm.server loads what the request names)
+            sw.append(f"    useModelName: {_q(um)}   # the name the server answers to")
     pre = [n for n in names if t.tier[n]["preload"]]
     hooks = ["hooks:", "  on_startup:", f"    preload: [{', '.join(pre)}]"] if pre else []
     costs = ", ".join(f"{n}: {t.tier[n]['evict_cost']:g}" for n in names)

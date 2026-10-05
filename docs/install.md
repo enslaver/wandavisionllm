@@ -21,8 +21,9 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 |---|---|---|
 | LiteLLM | `~/.local/bin/litellm` | `uv tool install 'litellm[proxy]==1.102.1' --with prometheus_client` |
 | llama-swap | `~/.local/bin/llama-swap` | download the macOS arm64 binary from [llama-swap releases](https://github.com/mostlygeek/llama-swap/releases) (v260 or newer: the config uses the `matrix` router and startup preload) |
-| mtplx | `~/.mtplx/bin/mtplx` | install the MTPLX app; it provides the CLI shim at that path (tested with 2.12.0) |
+| mtplx | `~/.mtplx/bin/mtplx` | install the MTPLX app; it provides the CLI shim at that path (tested with 2.12.0; 2.12.1 fixes an SSD-cache leak the haiku script works around) |
 | TensorFold | `~/.tensorfold/venv/bin/tensorfold` | install [TensorFold](https://github.com/ashhart/TensorFold) into a venv at `~/.tensorfold/venv` (tested with 0.3.4.1) |
+| mlx-vlm (optional) | `~/.local/bin/mlx_vlm.server` | `uv tool install mlx-vlm==0.6.13`; only the image judge uses it |
 
 Only want mtplx? Delete the `[fable]` section from `litellm/tiers.conf` (and `fable |` from its
 `resident =` line); TensorFold only runs the fable tier, because it decodes the dense 27B about twice
@@ -39,6 +40,7 @@ gives a tier 300 s to become healthy, which isn't enough for a first download.
 | opus | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `uvx --from huggingface_hub hf download Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed --local-dir ~/.mtplx/models/Youssofal--Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` |
 | sonnet | `Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed` | the same, with that id |
 | haiku | `Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed` | the same, with that id |
+| judge (optional) | `skylenage-ai/SkyJM-Gen-4B`, converted to MLX 8-bit at `~/models/SkyJM-Gen-4B-mlx-8bit` | the three commands in the header of `mtplx/bin/tier-judge.sh`; or delete the `[judge]` section from `litellm/tiers.conf` (and `\| judge` from `resident =`) |
 
 `mtplx forge discover` searches Hugging Face for ready-made MTPLX builds if you'd rather download
 than forge. Any model works; change `MODEL` in the tier script and see
@@ -109,6 +111,8 @@ claude                                               # /model opus | sonnet | ha
 - **Deploy from a laptop:** set `WANDAVISION_HOST` and `WANDAVISION_REMOTE_ROOT` in
   `wandavision.conf` on the laptop; `deploy.py` reruns itself on the Mac over ssh.
 - **Validate:** `cd litellm && uvx --with pyyaml python3 suite.py` runs the live integration suite.
+- **Image and video generation on a GPU box, image ranking, Open WebUI:** see [Vision](../Vision/README.md).
+- **Image LoRAs for haiku** (trained with Unsloth on a CUDA PC): [lora/README.md](../lora/README.md).
 
 ## Uninstall
 

@@ -71,18 +71,21 @@ Mac: [docs/hardware.md](docs/hardware.md).
 
 | Folder | Installs to | What |
 |---|---|---|
-| [`litellm/`](litellm/README.md) | `~/.litellm/` | LiteLLM config, launcher, and five hooks: `loop_breaker`, `ultron_admit`, `ultron_media`, `ultron_stats`, `ultron_rescue` |
+| [`litellm/`](litellm/README.md) | `~/.litellm/` | LiteLLM config, launcher, `tiers.conf`, and the hooks: `loop_breaker`, `ultron_admit`, `ultron_stats`, `ultron_rescue` (plus `ultron_media` from `Vision/media/`) |
 | `llama-swap/` | `~/.llama-swap/` | tier definitions, idle TTLs, the memory matrix |
 | `mtplx/bin/` | `~/.mtplx/bin/` | one launch script per tier; swap a model by editing one line |
 | [`wanda/`](wanda/README.md) | `~/wanda/` | the dashboard (stdlib Python + one HTML page) |
 | `caddy/` | `/opt/homebrew/etc/` | HTTPS front door: Wanda at `/`, LiteLLM at `/llm/`, media at `/media/` |
 | `launchd/` | `~/Library/LaunchAgents/` | keeps LiteLLM and llama-swap running |
 | `bin/` | `~/bin/` | `backup-stack.sh` |
-| [`lora/`](lora/README.md) | — (artifacts in `~/lora/`) | optional: fine-tune a tier on its own agent failures |
+| [`Vision/`](Vision/README.md) | `~/.litellm/` (the media hook) | images and video: the media hook, an image judge (`ultron/judge`) and its ranking tool, ComfyUI workflows, Open WebUI tools |
+| [`gpu-box/`](gpu-box/README.md) | a Windows PC with an NVIDIA GPU (optional) | sets up ComfyUI and Unsloth there: `python gpu-box\deploy.py` |
+| [`lora/`](lora/README.md) | — (artifacts in `~/lora/`) | optional: fine-tune a tier on its own agent failures, or train haiku on images with Unsloth |
 | `deploy.py` | — | the one way to install or change any of the above |
 
 Naming: *ultron* is the Mac this was built on, so local model ids are `ultron/<tier>` and the hooks
-are `ultron_*`. *Wanda* is the panel. Together: WandaVision.
+are `ultron_*`. *Wanda* is the panel, *Vision* the image side (generation, judging, image LoRAs).
+Together: WandaVision.
 
 ## The dashboard
 

@@ -1,0 +1,29 @@
+# Single entry point for the GPU box: ComfyUI at / and at /comfy/ (the Mac's caddy/Caddyfile does the same for Wanda).
+# gpu-box/deploy.py copies this to ~\caddy\Caddyfile and fills in the HTTPS site name below (GPU_BOX_HOSTNAME).
+{
+	auto_https disable_redirects
+}
+
+(services) {
+	# ComfyUI at /comfy/ (prefix stripped)
+	redir /comfy /comfy/
+	handle_path /comfy/* {
+		reverse_proxy 127.0.0.1:8188
+	}
+
+	# ComfyUI at the root: Open WebUI and API clients take a bare base URL
+	handle {
+		reverse_proxy 127.0.0.1:8188
+	}
+}
+
+# HTTPS on your hostname. On a Tailscale MagicDNS name (*.ts.net) Caddy fetches the cert from
+# Tailscale; a plain local name gets Caddy's local CA.
+__HOSTNAME__ {
+	import services
+}
+
+# LAN: http://gpu-box.local or its IP
+http://:80 {
+	import services
+}

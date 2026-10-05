@@ -11,8 +11,8 @@ Wanda 127.0.0.1:8790 behind Caddy :443 / :80
 
 ## What's on the page
 
-- **Status lamps** — LiteLLM liveness, llama-swap, memory / swap / pressure, GPU, routing modes,
-  and any on/off flags you define.
+- **Status lamps** — LiteLLM liveness, llama-swap, memory / swap / pressure (plus the top 3
+  processes by memory), GPU, routing modes, and any on/off flags you define.
 - **Tier cards** — live state (UNLOADED / LOADING / IDLE / PREFILL / GENERATING), decode or prefill
   tok/s, TTFT, MTP acceptance, cache hit, 5-minute stats, lifetime tokens, memory + session bank,
   idle → unload countdown, the request in flight, Load / Unload buttons.
@@ -27,8 +27,9 @@ Wanda 127.0.0.1:8790 behind Caddy :443 / :80
   "shadow-only", not stops.
 - **LoRA** — the Trace tap switch (`~/.ultron/trace-mode`), trace counts per tier, the `lora/run.sh`
   stage running now (train step x/y), which tier serves a pack, and `~/lora/runs` (checkpoints,
-  held-out val loss base → best, repeat rate base → adapter) and `~/lora/packs`. Empty until you use
-  [`lora/`](../lora/README.md).
+  held-out val loss base → best, repeat rate base → adapter) and `~/lora/packs`. Image LoRAs show up
+  too: merges copied from the GPU box (`~/lora/merges/`) as runs, and the mtplx packs forged from
+  them (`~/.mtplx/models/`) as packs. Empty until you use [`lora/`](../lora/README.md).
 - **Requests & events** — every completed request plus load / unload / mode-change events.
 - **Logs** — llama-swap, LiteLLM, Caddy, mode changes, OmniRoute calls, LOOPS, ADMIT, MEDIA,
   RESCUE, REQUESTS (secrets masked).

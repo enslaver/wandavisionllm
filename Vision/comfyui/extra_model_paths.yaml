@@ -1,0 +1,47 @@
+# Powered by Easy-Models-Linker, developed by Ivo
+# Pixaroma Community Edition
+# gpu-box/deploy.py fills in __HOME__ (%USERPROFILE%) when it copies this into ComfyUI.
+
+comfyui:
+    base_path: __HOME__\models\ComfyUI
+    is_default: true
+
+    .cache: models\.cache\
+    audio_encoders: models\audio_encoders\
+    background_removal: models\background_removal\
+    checkpoints: models\checkpoints\
+    clip: models\clip\
+    clip_vision: models\clip_vision\
+    configs: models\configs\
+    controlnet: models\controlnet\
+    detection: models\detection\
+    diffusers: models\diffusers\
+    diffusion_models: models\diffusion_models\
+    embeddings: models\embeddings\
+    facebook: models\facebook\
+    fishaudios2: models\fishaudioS2\
+    fonts: models\fonts\
+    frame_interpolation: models\frame_interpolation\
+    geometry_estimation: models\geometry_estimation\
+    gligen: models\gligen\
+    hypernetworks: models\hypernetworks\
+    ipadapter: models\ipadapter\
+    latent_upscale_models: models\latent_upscale_models\
+    llm: models\LLM\
+    loras: models\loras\
+    model_patches: models\model_patches\
+    optical_flow: models\optical_flow\
+    photomaker: models\photomaker\
+    pulid: models\pulid\
+    qwen-tts: models\qwen-tts\
+    rembg: models\rembg\
+    sam3: models\sam3\
+    skintoken: models\skintoken\
+    style_models: models\style_models\
+    text_encoders: models\text_encoders\
+    ultralytics: models\ultralytics\
+    unet: models\unet\
+    upscale_models: models\upscale_models\
+    vae: models\vae\
+    vae_approx: models\vae_approx\
+    yolo: models\yolo\

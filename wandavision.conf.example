@@ -10,3 +10,7 @@ WANDAVISION_HOSTNAME=localhost
 # on it (a shared mount or a clone). Leave WANDAVISION_HOST empty to deploy on the machine you run on.
 WANDAVISION_HOST=
 WANDAVISION_REMOTE_ROOT=
+
+# The GPU box (optional; gpu-box/deploy.py, run on that Windows PC): the name its Caddy serves HTTPS on.
+# Fills __HOSTNAME__ in gpu-box/caddy/Caddyfile. Empty = localhost (then use http://localhost there).
+GPU_BOX_HOSTNAME=

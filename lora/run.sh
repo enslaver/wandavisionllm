@@ -1,14 +1,14 @@
 #!/bin/zsh
 # run.sh <name> [train.py flags] — one LoRA round, unattended:
 #   sample (make_dataset.py) -> train (train.py) -> held-out loss per checkpoint (valloss.py) -> repeat rate (eval.py)
-# TIER=sonnet (default) or opus picks <tier>.yaml, that tier's traces, and the tier that samples and judges.
+# TIER=sonnet (default), opus or haiku picks <tier>.yaml, that tier's traces, and the tier that samples and judges.
 # The base view is LORA_BASE, else ~/lora/base/<tier>-4bit (README, Setup).
 # Run on the Mac with the stack up (sampling uses the live tier through llama-swap), from the repo:
 #   nohup lora/run.sh v1 --iters 100 --save-every 25 > ~/lora/runs/v1.out 2>&1 &
 #   TIER=opus nohup lora/run.sh opus-v1 > ~/lora/runs/opus-v1.out 2>&1 &
 # Logs: ~/lora/data/<name>.log, ~/lora/runs/<name>.log, ~/lora/runs/<name>-valloss.log, ~/lora/runs/<name>-eval.log
 set -e
-N=${1:?usage: [TIER=sonnet|opus] run.sh <name> [train.py flags]}; shift
+N=${1:?usage: [TIER=sonnet|opus|haiku] run.sh <name> [train.py flags]}; shift
 TIER=${TIER:-sonnet}
 cd "${0:A:h}"
 CFG=$TIER.yaml

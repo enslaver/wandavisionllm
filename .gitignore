@@ -22,3 +22,4 @@ wandavision-backup/
 # Claude Code local state
 .claude/settings.local.json
 rendered/
+unsloth_compiled_cache/
