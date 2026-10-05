@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-04
+
 ### Added
 
 - **Vision**, the image side of WandaVision, in `Vision/`: the media hook (moved from `litellm/`;
@@ -121,5 +123,6 @@ First public release.
 - CI (tests on Python 3.9 and 3.12, ruff, shell syntax, config rendering and validation) and a
   tag-driven release workflow.
 
-[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/enslaver/wandavisionllm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/enslaver/wandavisionllm/releases/tag/v0.1.0

@@ -20,6 +20,8 @@ jobs:
       - name: Test before publishing
         run: |
           python -m pytest litellm -q -p no:cacheprovider
+          (cd Vision/media && python -m pytest -q -p no:cacheprovider)
+          (cd gpu-box && python -m pytest -q -p no:cacheprovider)
           python scripts/check_repo.py
       - name: Release notes from CHANGELOG.md
         run: |
