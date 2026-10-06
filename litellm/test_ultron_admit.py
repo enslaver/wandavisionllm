@@ -972,3 +972,58 @@ def test_opus_reload_waits_for_a_busy_judge(adm, monkeypatch):
     d = req(model="claude-opus-5-5", session="S2", cid="o1")
     run(adm.admit(d, "anthropic_messages", "enforce"))
     assert d["model"] == "cloud/opus" and adm.recent["o1"].endswith("overflow=evict-busy")
+
+
+def test_bili_routes_chat_to_routed_tiers_and_cloud(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMNIROUTE_BASE", "https://omniroute.example.com/v1")
+    mode = tmp_path / "bili-mode"
+    monkeypatch.setattr(ua, "BILI_MODE_FILE", str(mode))
+    alive = [True]
+    monkeypatch.setattr(ua, "bili_alive", lambda: alive[0])
+    t = ua.tiers()
+    big, judge = t.routed()[0], next((n for n in t.names if not t.tier[n]["routed"]), None)
+    cloud_tier = next(n for n in t.routed() if t.tier[n]["cloud"])
+    hook = ua.UltronAdmit()
+    hook.admission.keys["cid-1"] = f"h:8b07a98c:{big}"
+    hook.admission.recent["cid-1"] = "pinned:1:loaded"
+    local, cloud = "http://127.0.0.1:8001/v1", "https://omniroute.example.com/v1"
+    run = lambda model, base, **kw: asyncio.run(hook.async_pre_call_deployment_hook(
+        {"model": model, "api_base": base, "messages": [{"role": "user", "content": "go"}], **kw}, None))
+    assert run(f"hosted_vllm/{big}", local)["api_base"] == local  # mode file missing -> off
+    mode.write_text("on\n")
+    out = run(f"hosted_vllm/{big}", local, litellm_call_id="cid-1", extra_headers={"x-mtplx-cache-mode": "bypass"})
+    assert out["api_base"] == "http://127.0.0.1:8787/bili/openai/http://127.0.0.1:8001/v1"
+    assert out["extra_headers"] == {"x-mtplx-cache-mode": "bypass", "x-acp-session": f"h-8b07a98c-{big}"}
+    assert hook.admission.recent["cid-1"] == "pinned:1:loaded; bank=off(single-turn); bili"
+    again = asyncio.run(hook.async_pre_call_deployment_hook(out, None))  # second pass of a /v1/messages request
+    assert again["api_base"] == out["api_base"] and hook.admission.recent["cid-1"].count("bili") == 1
+    assert "x-acp-session" in run(f"hosted_vllm/{big}", local)["extra_headers"]  # no admission key -> hashed fallback
+    if judge:
+        assert run(f"hosted_vllm/{judge}", local)["api_base"] == local  # routed = no: direct
+    cid = t.tier[cloud_tier]["cloud"]
+    assert run(f"openai/{cid}", cloud, metadata={"model_group": f"cloud/{cloud_tier}"})["api_base"] == f"http://127.0.0.1:8787/bili/openai/{cloud}"
+    assert run(f"openai/{cid}", cloud)["api_base"].startswith("http://127.0.0.1:8787/bili/")  # no metadata: by model id
+    assert run("openai/some-audio-model", cloud, metadata={"model_group": "media/transcribe"})["api_base"] == cloud
+    assert run("openai/other-model", "https://elsewhere.example.com/v1")["api_base"] == "https://elsewhere.example.com/v1"
+    assert asyncio.run(hook.async_pre_call_deployment_hook({"model": "openai/nomic-embed-text", "api_base": cloud,
+                                                            "input": ["x"]}, None))["api_base"] == cloud  # not chat
+    alive[0] = False
+    assert run(f"hosted_vllm/{big}", local)["api_base"] == local  # bili down -> direct
+
+
+def test_bili_session_is_a_safe_filename():
+    assert ua.bili_session("cc:abc/def:main") == "cc-abc-def-main"
+    assert len(ua.bili_session("x" * 500)) == 120
+
+
+def test_bili_config_block_follows_tiers():
+    import ultron_tiers
+    t = ultron_tiers.Tiers("[routing]\n[big]\ncontext = 200000\ntimeout = 2400\ncloud = vendor/big-1\n"
+                           "[judge]\nrouted = no\n[small]\ncloud = vendor/small-1\n")
+    cfg = json.loads("{" + ultron_tiers.blocks(t, cloud_base="https://cloud.example.com/v1/")["__TIERS_BILI__"].rstrip(",") + "}")
+    assert cfg["network"] == {"upstreamTimeoutMs": 2400000}  # the longest tier timeout, at least 1800 s
+    assert cfg["providers"] == {
+        "http://127.0.0.1:8001": {"models": {"big": {"context": 200000}, "small": {"context": 131072}}},
+        "https://cloud.example.com": {"models": {"vendor/big-1": {"context": 200000}, "vendor/small-1": {"context": 131072}}},
+    }
+    assert "cloud.example" not in ultron_tiers.blocks(t)["__TIERS_BILI__"]  # no OMNIROUTE_BASE: local only

@@ -113,13 +113,17 @@ claude                                               # /model opus | sonnet | ha
 - **Validate:** `cd litellm && uvx --with pyyaml python3 suite.py` runs the live integration suite.
 - **Image and video generation on a GPU box, image ranking, Open WebUI:** see [Vision](../Vision/README.md).
 - **Image LoRAs for haiku** (trained with Unsloth on a CUDA PC): [lora/README.md](../lora/README.md).
+- **Context compression (bili):** `npm i -g --prefix ~/.billion-context billion-context` (the `-g`
+  puts the binary at `~/.billion-context/bin/bili`), then
+  `launchctl kickstart gui/$(id -u)/com.billion-context.bili` and switch Wanda's Compression to `on`.
+  See [litellm/README.md](../litellm/README.md#compression-bili-off-by-default).
 
 ## Uninstall
 
 ```bash
-for l in com.litellm.proxy com.llama-swap com.wanda.portal; do
+for l in com.litellm.proxy com.llama-swap com.billion-context.bili com.wanda.portal; do
   launchctl bootout gui/$(id -u)/$l; rm -f ~/Library/LaunchAgents/$l.plist
 done
 brew services stop caddy
-rm -rf ~/wanda ~/.wanda ~/.llama-swap ~/.ultron ~/.wandavision   # keeps ~/.litellm (your env) and the models
+rm -rf ~/wanda ~/.wanda ~/.llama-swap ~/.ultron ~/.wandavision ~/.bili ~/.billion-context   # keeps ~/.litellm (your env) and the models
 ```

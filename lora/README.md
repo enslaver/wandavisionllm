@@ -72,15 +72,21 @@ For every trace of `--tier` (default `sonnet`):
    becomes an example: `{"messages": prompt + [turn], "tools": [...]}`. An example longer than
    `max_seq_length` in `<tier>.yaml` is dropped (`too_long`): mlx_lm would truncate the trained turn
    away, and one such row makes every mlx_lm `Val loss` print `nan`.
-6. **Split.** 10% valid, 90% train. Samples and verdicts are cached in `<out>/cache.jsonl`, so a
-   rerun resumes and `--no-sample` rebuilds from cache only.
+6. **Split.** ~10% valid (`--valid`), whole conversations at a time: one trace file is one
+   conversation, and points of one conversation share most of their prompt. A conversation that would
+   take valid past twice its share stays in train (one coding-agent session held 85 of 148 passing
+   points). Samples and verdicts are cached in `<out>/cache.jsonl`, so a rerun resumes and
+   `--no-sample` rebuilds from cache only (`CACHE_FROM=<round> lora/run.sh ...` starts a round from an
+   earlier round's cache that way: same points, fresh split, no sampling).
 
 The last line prints the counts: `traces`, `other_tier`, `points`, `kept`, `no_pass`, `poisoned`,
-`duplicate`, `too_long`.
+`duplicate`, `too_long`, `conversations`.
 
 ### 3. Training (`train.py`, `<tier>.yaml`)
 
 QLoRA on the same 4-bit weights the tier serves (a text-only view of the MTPLX pack, see setup).
+The loss covers the chosen turn only and stops at its last token: mlx_lm's own mask also trains the
+pad after it (see [Results so far](#results-so-far), "The loss mask"; `test_train_loss.py` pins it).
 `train.py` takes every `mlx_lm.lora` flag (`--iters`, `--save-every`, `--learning-rate`, …).
 Checkpoints land in `runs/<name>/00000NN_adapters.safetensors`.
 
@@ -224,8 +230,10 @@ $env:TORCHDYNAMO_DISABLE='1'; $env:UNSLOTH_COMPILE_DISABLE='1'
 Without `--data` it trains 50 steps on 200 rows of `unsloth/LaTeX_OCR`: a pipeline smoke run, not
 something to ship. `--data` takes a JSONL file, one row per line:
 `{"image": "img/0001.jpg", "prompt": "...", "answer": "...", "think": "..."}`. Image paths are
-relative to the file; `think` is optional (see the data notes below). With `--data` the default LR is
-1e-4; `--epochs X` sets the step count from the row count.
+relative to the file; `think` is optional (see the data notes below). A row without `image` is
+text-only: mix a few copies of a text task the tier already does (a yes/no gate, say) into an image
+round so the adapter doesn't wear it down. With `--data` the default LR is 1e-4; `--epochs X` sets
+the step count from the row count.
 
 For a long run, `unsloth_queue.sh` (Git Bash on Windows, or Linux) does it unattended:
 
@@ -459,7 +467,7 @@ tokenizer.
   - On unseen command-line tasks (5 samples each), iter 200 stopped repeating on the trained task
     but did worse on the others; iter 50 was within noise. Neither is worth serving.
   - Applied since: data from many conversations (trace tap), `--iters 100 --save-every 25`, stop on
-    held-out loss. Still open: split train/valid by conversation instead of by point.
+    held-out loss, and (since v2) a train/valid split by conversation instead of by point.
 - **opus smoke run** (2026-10-01, the reference Mac's Qwen3.6-35B-A3B build): 10 iterations on the v0 data; held-out loss 0.590 → 0.550 (5) →
   0.525 (10); bf16 re-quantized reproduces the pack (0.9998); the fused pack serves and calls tools.
 - **haiku image smoke run** (2026-10-02): see [Ship it on the Mac](#ship-it-on-the-mac). Proves the
@@ -475,3 +483,14 @@ tokenizer.
   - Lesson: more conversations alone didn't stop the overfit; it happens by the first checkpoint, as in
     v0. Next: a much lower LR or far fewer iterations, and split by conversation. Two of three failure
     points yield no passing sample, so plan on weeks of traces per hundred rows.
+- **opus-v1** (2026-10-04): 357 traces, 499 failure points; 239 kept, 216 train / 23 valid (176
+  too_long, 78 no_pass, 6 poisoned). Sampling 5 h (~41 s per point), training 47 min. **Not shipped:**
+  held-out loss base 0.324, then 0.394 / 0.424 / 0.414 / 0.409 at 25 / 50 / 75 / 100; repeats 18.5% →
+  8.7% (92 samples), same in-distribution caveat.
+- **The loss mask** (found 2026-10-04): v0, v1 and opus-v1 trained on one target too many per row.
+  mlx_lm's `default_loss` masks `steps <= length`, which includes predicting the pad token 0 (`!`)
+  after `<|im_end|>\n`. That target costs ~23 nats, so on v1's valid rows it was ~42% of the training
+  loss (0.437 with it, 0.257 without). `valloss.py` never counted it, so the held-out numbers above
+  stand; what was wrong was the training signal, mostly spent learning the pad. `train.py` now stops at
+  `length - 1` and `test_train_loss.py` pins that. It fits every round "overfitting" from the first
+  checkpoint; the next sonnet round (v1's samples via `CACHE_FROM`, split by conversation) tests it.

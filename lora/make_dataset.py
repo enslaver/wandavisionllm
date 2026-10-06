@@ -26,6 +26,7 @@ import random
 import re
 import sys
 import urllib.request
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "litellm"))
@@ -198,7 +199,7 @@ def main():
     ap.add_argument("--k", type=int, default=6)
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--max-per-sig", type=int, default=2, help="failure points kept per identical failed call")
-    ap.add_argument("--valid", type=float, default=0.1)
+    ap.add_argument("--valid", type=float, default=0.1, help="share of examples held out, whole conversations at a time")
     ap.add_argument("--no-sample", action="store_true", help="only use points already in the cache")
     a = ap.parse_args()
     global TIER
@@ -209,7 +210,7 @@ def main():
     if cache_p.exists():
         for l in cache_p.open():
             d = json.loads(l); cache[d["key"]] = d
-    examples, used = [], set()
+    examples, convs, used = [], [], set()
     stats = {"traces": 0, "other_tier": 0, "points": 0, "kept": 0, "no_pass": 0, "poisoned": 0, "duplicate": 0,
              "too_long": 0}
     tok, limit = seq_limit()
@@ -220,6 +221,7 @@ def main():
             continue
         stats["traces"] += 1
         msgs, tools = ua.repair_split_tool_calls(tr["messages"]), tr.get("tools")
+        conv = Path(tp).stem  # the trace tap writes one file per conversation (shared history is deduped above)
         per_sig = {}
         for i, failed, batch_bad in failure_points(msgs):
             per_sig[batch_bad] = per_sig.get(batch_bad, 0) + 1
@@ -272,14 +274,33 @@ def main():
                 stats["too_long"] += 1
                 continue
             examples.append({"messages": prompt + [turn], "tools": tl})
+            convs.append(conv)
             stats["kept"] += 1
-    random.Random(0).shuffle(examples)
-    nv = max(1, int(len(examples) * a.valid)) if len(examples) > 1 else 0
-    for name, rows in (("valid", examples[:nv]), ("train", examples[nv:])):
+    # Hold out whole conversations. Points of one conversation share most of their prompt, so the per-point split
+    # (v0, v1, opus-v1) put near-copies of training rows in valid. One conversation can hold most of the data
+    # (2026-10-04: one Claude Code session had 85 of 148 passing points), so skip any that would take valid past
+    # twice its share.
+    size = Counter(convs)
+    order = sorted(size)
+    random.Random(0).shuffle(order)
+    want = max(1, int(len(examples) * a.valid)) if len(size) > 1 else 0
+    held, n = set(), 0
+    for c in order:
+        if n >= want:
+            break
+        if n + size[c] <= 2 * want:
+            held.add(c)
+            n += size[c]
+    split = {"valid": [e for e, c in zip(examples, convs) if c in held],
+             "train": [e for e, c in zip(examples, convs) if c not in held]}
+    random.Random(0).shuffle(split["train"])
+    for name, rows in split.items():
         with (out / f"{name}.jsonl").open("w") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")
-    print(json.dumps(stats), f"-> {out}/train.jsonl ({len(examples) - nv}), valid.jsonl ({nv})")
+    stats["conversations"] = len(size)
+    print(json.dumps(stats), f"-> {out}/train.jsonl ({len(split['train'])}), valid.jsonl ({len(split['valid'])}, "
+          f"{len(held)} conversations)")
 
 
 if __name__ == "__main__":

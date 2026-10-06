@@ -9,3 +9,10 @@ import loop_breaker
 @pytest.fixture(autouse=True)
 def _tmp_loop_breaker_log(tmp_path, monkeypatch):
     monkeypatch.setattr(loop_breaker, "LOG_PATH", str(tmp_path / "loop-breaker.jsonl"))
+
+
+@pytest.fixture(autouse=True)
+def _bili_off(tmp_path, monkeypatch):
+    """A live ~/.ultron/bili-mode must not reroute unit-test requests through bili."""
+    import ultron_admit
+    monkeypatch.setattr(ultron_admit, "BILI_MODE_FILE", str(tmp_path / "bili-mode"))

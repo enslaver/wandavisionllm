@@ -3,6 +3,8 @@
 #   sample (make_dataset.py) -> train (train.py) -> held-out loss per checkpoint (valloss.py) -> repeat rate (eval.py)
 # TIER=sonnet (default), opus or haiku picks <tier>.yaml, that tier's traces, and the tier that samples and judges.
 # The base view is LORA_BASE, else ~/lora/base/<tier>-4bit (README, Setup).
+# CACHE_FROM=<earlier round> starts from that round's samples (~/lora/data/<round>/cache.jsonl) and samples nothing
+# new, so the tier needn't be loaded: same points, fresh split.
 # Run on the Mac with the stack up (sampling uses the live tier through llama-swap), from the repo:
 #   nohup lora/run.sh v1 --iters 100 --save-every 25 > ~/lora/runs/v1.out 2>&1 &
 #   TIER=opus nohup lora/run.sh opus-v1 > ~/lora/runs/opus-v1.out 2>&1 &
@@ -21,8 +23,13 @@ R=~/lora/runs/$N
 [[ -e $R ]] && { print -r -- "run.sh: $R exists; pick a new name"; exit 1; }
 mkdir -p ~/lora/data ~/lora/runs
 
-print -r -- "$(date '+%T') sampling ($TIER) -> $D"
-$PY make_dataset.py ~/.ultron/traces/*.json(N) ~/lora/traces/*.json(N) --out $D --tier $TIER > $D.log 2>&1
+MD=()
+if [[ -n $CACHE_FROM ]]; then
+  mkdir -p $D && cp ~/lora/data/$CACHE_FROM/cache.jsonl $D/
+  MD=(--no-sample)
+fi
+print -r -- "$(date '+%T') sampling ($TIER${CACHE_FROM:+, cached from $CACHE_FROM}) -> $D"
+$PY make_dataset.py ~/.ultron/traces/*.json(N) ~/lora/traces/*.json(N) --out $D --tier $TIER $MD > $D.log 2>&1
 tail -1 $D.log
 
 # Training, valloss and eval load the model next to the tiers: opus at 8k peaks ~36 GB and an

@@ -47,6 +47,7 @@ Template: [`litellm/env.example`](../litellm/env.example).
 | `~/.ultron/media-mode` | `enforce`, `shadow`, `off` | `shadow` | media prompts go to OmniRoute or only log |
 | `~/.ultron/rescue-mode` | `enforce`, `shadow`, `off` | `enforce` | a tool call written as a ```bash block becomes a real tool call, or only logs |
 | `~/.ultron/trace-mode` | `on`, `off` | `off` | save each local-tier agent conversation's latest request to `~/.ultron/traces/` (for `lora/`) |
+| `~/.ultron/bili-mode` | `on`, `off` | `off` | send chat requests for the tiers and `cloud/*` through billion-context compression (needs bili installed; direct while it isn't running) |
 
 Wanda's Controls & routing section has a switch for each; the trace tap's is in its LoRA section.
 

@@ -118,6 +118,11 @@ MODES = [
      "options": ["shadow", "enforce", "off"],
      "help": "enforce: a local tier's reply that ends with the ```bash block it meant to run becomes a real tool call · "
              "shadow: log only"},
+    {"key": "bili", "label": "Compression", "path": ULTRON_DIR / "bili-mode", "env": None, "default": "off",
+     "options": ["off", "on"], "warn": [],   # optional add-on: off is the normal state, not a warning
+     "help": "on: chat requests to the tiers and cloud overflow go through billion-context (bili, 127.0.0.1:8787, "
+             "UI at /__bili/), which adds a compress tool and folds long conversations into the model's own "
+             "summaries · off: straight to the tier / cloud endpoint · bili not installed or down: direct either way"},
     # Shown in the LoRA section ("panel"). on/off are both normal states, so neither is painted as a warning.
     {"key": "trace", "label": "Trace tap", "path": ULTRON_DIR / "trace-mode", "env": None, "default": "off",
      "options": ["off", "on"], "warn": [], "panel": "lora",
@@ -1012,6 +1017,10 @@ def services_status():
         row["href"] = s.get("open") or s.get("path")
         if s.get("disabled"):
             row["state"] = "disabled"
+        elif s.get("launchd"):
+            # Up = the LaunchAgent has a live PID. For services that log every connection (bili),
+            # where an HTTP probe every 10 s would flood their log.
+            row["state"] = "up" if re.search(r'"PID" = \d+;', sh("launchctl", "list", s["launchd"])) else "down"
         elif s.get("upstream"):
             probe = s.get("health") or s.get("path") or "/"
             if s.get("path") and probe.startswith(s["path"]):

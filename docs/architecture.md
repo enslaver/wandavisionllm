@@ -8,7 +8,8 @@
 | llama-swap | `127.0.0.1:8001` | LaunchAgent `com.llama-swap` | starts/stops tier servers; memory matrix; reloads its config on change |
 | tier servers | `127.0.0.1:18001+` | llama-swap, via `~/.mtplx/bin/tier-*.sh` | mtplx (opus, sonnet, haiku), TensorFold (fable) and mlx_vlm.server (the image judge); no auth, loopback only |
 | Wanda | `127.0.0.1:8790` | LaunchAgent `com.wanda.portal` | samples everything once a second; the panel |
-| Caddy | `:443`, `:80` | `brew services` | Wanda at `/`, LiteLLM at `/llm/`, media at `/media/`, your services |
+| bili (optional) | `127.0.0.1:8787` | LaunchAgent `com.billion-context.bili` | billion-context compression between LiteLLM and the upstreams when `~/.ultron/bili-mode` = `on`; no auth, loopback only |
+| Caddy | `:443`, `:80` | `brew services` | Wanda at `/`, LiteLLM at `/llm/`, media at `/media/`, the read-only bili UI at `/__bili/`, your services |
 | OmniRoute | elsewhere | you | optional cloud overflow and media generation |
 | ComfyUI | the GPU box (optional) | `gpu-box/deploy.py` | local image/video generation for Open WebUI ([Vision](../Vision/README.md)) |
 
@@ -30,6 +31,8 @@ LiteLLM routes data["model"]:
   ultron/sonnet ──► llama-swap :8001 ──(loads the tier if needed)──► mtplx :1800x
                     (deployment hook: history fixes, PDFs → text, one-shots skip the mtplx bank)
   cloud/sonnet  ──► OmniRoute combo  (never falls back to local: overflow is one-way)
+  bili-mode on: both go via bili :8787 first (deployment hook, last step), which compresses
+                long histories into the model's own summaries; bili down → direct
   ▼
 response streams back; ultron_rescue turns a trailing ```bash block a local tier wrote instead
 of a tool call into a tool_use; ultron_stats logs usage, TTFT, tok/s; x-ultron-route says why
@@ -73,6 +76,8 @@ matrix) but knows nothing about conversations, agents or clouds. Each does one j
 | `~/.litellm/*.jsonl` | the hooks | loop-breaker, ultron-admit, ultron-stats, media, rescue logs |
 | `~/.ultron/*-mode` | Wanda / you | live switches |
 | `~/.ultron/media/` | ultron_media | generated images and videos |
+| `~/.bili/start.sh`, `config.json` | deploy | optional bili launcher and config (providers from `tiers.conf`) |
+| `~/.bili/env`, `~/.billion-context/` | you | bili overrides (`BILI_BIN`); the npm install |
 | `~/.llama-swap/config.yaml` | deploy | tiers and matrix |
 | `~/.mtplx/bin/tier-*.sh` | deploy | tier launch scripts |
 | `~/wanda/`, `~/.wanda/token`, `~/.wanda/www/` | deploy / Wanda / you | the panel, its POST token, services + icons |

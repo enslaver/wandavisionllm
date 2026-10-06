@@ -116,10 +116,9 @@ def chat(image, question, answer, think=""):
     # Inline <think> rather than a reasoning_content key: the template renders both the same, and Unsloth's vision
     # collator rebuilds message content, which could drop an extra key.
     text = f"<think>\n{think}\n</think>\n\n{answer}" if think else answer
-    return {"messages": [
-        {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": question}]},
-        {"role": "assistant", "content": [{"type": "text", "text": text}]},
-    ]}
+    assistant = {"role": "assistant", "content": [{"type": "text", "text": text}]}
+    user = ([{"type": "image", "image": image}] if image is not None else []) + [{"type": "text", "text": question}]
+    return {"messages": [{"role": "user", "content": user}, assistant]}   # image None: a text-only row
 
 
 def smoke_rows(n):
@@ -128,7 +127,9 @@ def smoke_rows(n):
 
 
 def jsonl_rows(path):
-    """--data rows. Images open per row: decoding a few thousand 1280 px images up front takes ~13 GB of RAM."""
+    """--data rows. Images open per row: decoding a few thousand 1280 px images up front takes ~13 GB of RAM.
+    A row without "image" is text-only: mix some in to keep a text skill the tier already has (a yes/no gate, say)
+    from fading while the adapter learns images."""
     import torch
     from PIL import Image
 
@@ -139,10 +140,11 @@ def jsonl_rows(path):
             if not line.strip():
                 continue
             r = json.loads(line)
-            missing = [k for k in ("image", "prompt", "answer") if not r.get(k)]
+            missing = [k for k in ("prompt", "answer") if not r.get(k)]
             if missing:
                 sys.exit(f"{path}:{n}: missing {', '.join(missing)}")
-            specs.append((os.path.join(root, os.path.expanduser(r["image"])), r["prompt"], r["answer"], r.get("think", "")))
+            image = os.path.join(root, os.path.expanduser(r["image"])) if r.get("image") else None
+            specs.append((image, r["prompt"], r["answer"], r.get("think", "")))
 
     class Rows(torch.utils.data.Dataset):
         def __len__(self):
@@ -150,9 +152,10 @@ def jsonl_rows(path):
 
         def __getitem__(self, i):
             image, q, ans, think = specs[i]
-            return chat(Image.open(image).convert("RGB"), q, ans, think)
+            return chat(Image.open(image).convert("RGB") if image else None, q, ans, think)
 
-    print(f"{sum(bool(s[3]) for s in specs)} of {len(specs)} rows carry reasoning")
+    print(f"{sum(bool(s[3]) for s in specs)} of {len(specs)} rows carry reasoning; "
+          f"{sum(s[0] is None for s in specs)} text-only")
     return Rows()
 
 
@@ -166,7 +169,7 @@ def keep_awake():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out")
-    ap.add_argument("--data", help="JSONL of {image, prompt, answer[, think]} rows instead of the LaTeX_OCR smoke set")
+    ap.add_argument("--data", help="JSONL of {[image,] prompt, answer[, think]} rows instead of the LaTeX_OCR smoke set")
     ap.add_argument("--rows", type=int, default=200, help="LaTeX_OCR rows for the smoke run")
     ap.add_argument("--steps", type=int, default=50)
     ap.add_argument("--epochs", type=float, help="set --steps from the row count (effective batch 4)")

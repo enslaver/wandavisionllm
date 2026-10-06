@@ -17,7 +17,7 @@ check:
 	uv run --no-project --with pyyaml python3 scripts/check_repo.py
 
 shellcheck:
-	for f in litellm/start.sh wanda/install.sh lora/unsloth_queue.sh; do bash -n $$f || exit 1; done
+	for f in litellm/start.sh wanda/install.sh lora/unsloth_queue.sh bili/start.sh; do bash -n $$f || exit 1; done
 	for f in mtplx/bin/*.sh bin/*.sh; do zsh -n $$f || exit 1; done
 
 render:  ## write the filled-in files to ./rendered for review
