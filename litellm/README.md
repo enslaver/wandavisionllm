@@ -264,6 +264,43 @@ tool-carrying request of each local-tier conversation, as the tier sees it, to
 history). It's the training data for [`lora/`](../lora/README.md). Traces hold tool output (file
 contents, command output): treat them like the conversations themselves. `ULTRON_TRACE_DIR` moves them.
 
+### Compression (bili, off by default)
+
+[billion-context](https://github.com/ranxianglei/billion-context) (`bili`, npm, MIT) can compress every
+chat request LiteLLM sends upstream, from one install behind LiteLLM: client → LiteLLM `:4000` (auth,
+hooks, admission, overflow) → bili `127.0.0.1:8787` → llama-swap or the cloud endpoint. Clients change
+nothing.
+
+- **Install:** `npm i -g --prefix ~/.billion-context billion-context`, then
+  `launchctl kickstart gui/$(id -u)/com.billion-context.bili`. The `-g` matters: without it the binary
+  lands in `node_modules/.bin/`, not at `~/.billion-context/bin/bili` where `start.sh` looks (or set
+  `BILI_BIN` in `~/.bili/env`). Without the binary the LaunchAgent logs a hint to `~/.bili/bili.log`
+  and exits; launchd doesn't retry it.
+- **Switch:** `~/.ultron/bili-mode` = `on` | `off` (Wanda: Controls & routing → Compression; missing =
+  off), re-read every request. The deployment hook's last step, after the history fixes, points each
+  chat request for a routed tier (and its aliases) or a `cloud/<tier>` overflow at
+  `http://127.0.0.1:8787/bili/openai/<upstream base>`. `routed = no` models (the judge), `media/*` and
+  embeddings go direct, and so does everything while bili's LaunchAgent has no PID (checked with
+  `launchctl` every 5 s, since bili logs every connection). `x-ultron-route` ends in `; bili`.
+- **Sessions:** the hook sends the conversation key admission pins on as `x-acp-session`, so bili keeps
+  one session per conversation across tiers and restarts.
+- **How it compresses:** bili tags every message and adds a `compress` tool plus ~4k tokens of
+  instructions to each request (prefix-cached after the first turn). Past ~50k compressible tokens it
+  nudges the model to call it; the model writes the summary and bili sends it in place of that range on
+  every later request. Until then nothing is saved. Requests with `max_tokens` ≤ 200 pass untouched.
+  A small model can call `compress` on a tiny prompt; bili then returns `[Compression FAILED: …]` as
+  the reply.
+- **Config:** `bili/config.json`, filled in by `deploy.py`: loopback bind, no self-update, each routed
+  tier's `context` from `tiers.conf` as its window (bili compresses at 75% of it), each tier's `cloud`
+  id at `OMNIROUTE_BASE`, and an upstream timeout no shorter than the longest tier `timeout`.
+- **Exposure:** bili's `/bili/` proxy has **no authentication** and forwards to whatever URL is in its
+  path, so it stays on loopback. Caddy exposes only the UI at `/__bili/`, read-only (GET/HEAD).
+- **Clients:** remove any client-side billion-context plugin (pi, opencode, …) or requests are
+  compressed twice.
+- **Speed:** on the reference Mac, sonnet decoded 138.8 tok/s through bili vs 139.7 direct.
+- **Rollback:** `echo off > ~/.ultron/bili-mode` (next request goes direct, no restart);
+  `launchctl bootout gui/$(id -u)/com.billion-context.bili` stops bili entirely.
+
 ### Agent-round history
 
 `async_pre_call_deployment_hook` rewrites the chat messages for every local tier (api_base

@@ -13,6 +13,26 @@
 		reverse_proxy 127.0.0.1:4000
 	}
 
+	# billion-context web UI (bili, optional; LaunchAgent com.billion-context.bili). Its pages fetch
+	# absolute /__bili/... URLs, so no prefix strip. Only /__bili/* is exposed: bili's /bili/ proxy has
+	# no auth and forwards to any URL in its path. Read-only: through Caddy every request reaches bili
+	# from loopback, which is all its admin gate checks, so writes (PUT config, POST ...) would be open
+	# to the network. Change settings on the Mac or over `ssh -L 8787:127.0.0.1:8787 <your-mac>`. bili
+	# answers admin requests only for a loopback Host, hence header_up Host. Not installed: 502.
+	redir /__bili /__bili/
+	@bili_read {
+		path /__bili/*
+		method GET HEAD
+	}
+	handle @bili_read {
+		reverse_proxy 127.0.0.1:8787 {
+			header_up Host 127.0.0.1:8787
+		}
+	}
+	handle /__bili/* {
+		respond "bili UI is read-only from the network; change settings on the Mac (ssh -L 8787:127.0.0.1:8787)" 403
+	}
+
 	# Generated images/videos (ultron_media.py writes ~/.ultron/media)
 	handle_path /media/* {
 		root * __HOME__/.ultron/media

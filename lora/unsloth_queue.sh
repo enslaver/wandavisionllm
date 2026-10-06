@@ -17,6 +17,7 @@ HOURS=8
 case ${1:-} in [0-9]*) HOURS=$1; shift ;; esac
 OUT=$HOME/lora/$NAME
 TRAIN="$(cd "$(dirname "$0")" && pwd)/unsloth_vision.py"
+command -v cygpath >/dev/null && TRAIN=$(cygpath -w "$TRAIN")   # Git Bash: Windows python gets a Windows path
 export PYTHONIOENCODING=utf-8 TORCHDYNAMO_DISABLE=1 UNSLOTH_COMPILE_DISABLE=1
 log() { echo "$(date '+%F %T') $*"; }
 
@@ -34,7 +35,7 @@ mkdir -p "$OUT"
 log "probe (waits for the GPU)"
 "$PY" -X faulthandler "$TRAIN" "$OUT/probe" --4bit --wait-gpu --probe 12 "$@" > "$OUT/probe.log" 2>&1
 sps=$(grep -o 'probe_sec_per_step [0-9.]*' "$OUT/probe.log" | awk '{print $2}')
-grep -E "gpu guard|rows,|peak VRAM|probe_sec" "$OUT/probe.log"
+grep -E "gpu guard|rows,|carry reasoning|peak VRAM|probe_sec" "$OUT/probe.log"
 [ -n "$sps" ] || { log "probe failed; tail of $OUT/probe.log:"; tail -20 "$OUT/probe.log"; exit 1; }
 
 for try in 1 2 3; do

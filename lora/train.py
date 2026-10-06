@@ -27,8 +27,12 @@ def chunked_loss(model, batch, lengths):
     h = lm.model(inputs)
     head = lm.model.embed_tokens.as_linear if lm.args.tie_word_embeddings else lm.lm_head  # frozen
 
+    # lengths = (prompt offset, row length). Target step j is token j, so the answer is offset..length-1.
+    # mlx_lm's default_loss uses steps <= length, which also trains predicting the pad token 0 ('!') after
+    # <|im_end|>\n: ~23 nats on one target per row, ~42% of a sonnet trace's loss (2026-10-04). Every sonnet/opus
+    # round before v2 "overfit from the first checkpoint" mostly by learning that pad.
     steps = mx.arange(1, targets.shape[1] + 1)
-    mask = mx.logical_and(steps >= lengths[:, 0:1], steps <= lengths[:, 1:])
+    mask = mx.logical_and(steps >= lengths[:, 0:1], steps < lengths[:, 1:])
     total = mx.array(0.0)
     for s in range(0, targets.shape[1], LOSS_CHUNK):
         tc, mc = targets[:, s:s + LOSS_CHUNK], mask[:, s:s + LOSS_CHUNK]  # constants: only hc is differentiated

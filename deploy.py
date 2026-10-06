@@ -20,6 +20,7 @@ else 4000). Settings come from the environment, then from wandavision.conf next 
 Tiers: litellm/tiers.conf lists the local model tiers. A line `# __TIERS_<PART>__` in a config
 file is replaced by that part generated from it (ultron_tiers.blocks()); the tier scripts to
 deploy are the ones it names. A tiers.conf with problems is never rendered or pushed.
+bili/config.json's providers also list each tier's cloud id at OMNIROUTE_BASE (from ~/.litellm/env).
 
 push copies only files whose content differs, then runs that component's reload step. LiteLLM and
 llama-swap changes first wait until LiteLLM has no request in flight, so nobody's request is cut off
@@ -107,6 +108,10 @@ except Exception as e:  # noqa: BLE001 — unreadable or not INI: nothing below 
     sys.exit(f"litellm/tiers.conf: {e}")
 BLOCK_RE = re.compile(r"^([ \t]*)# (__TIERS_[A-Z_]+__)[ \t]*$", re.M)
 
+BILI_AFTER = ("U=$(id -u); if launchctl print gui/$U/com.billion-context.bili >/dev/null 2>&1; then "
+              "launchctl kickstart -k gui/$U/com.billion-context.bili && echo 'restarted com.billion-context.bili'; "
+              "else echo 'bili: LaunchAgent not loaded yet; ./deploy.py push launchd starts it'; fi")
+
 # component -> where it lives on the Mac and how it's reloaded. Listed in first-install order.
 #   files: listed files in the folder, or a (repo path, name) pair for one kept in another folder;
 #          tree: the whole folder (files removed here are removed there)
@@ -128,8 +133,14 @@ COMPONENTS = {
                                        ("Vision/media/ultron_media.py", "ultron_media.py")],  # the media hook lives with Vision
         "idle": True, "after": "litellm",
     },
+    "bili": {   # optional compression behind LiteLLM (~/.ultron/bili-mode); requests run through it, so idle
+        "dst": "~/.bili", "files": ["start.sh", "config.json"], "idle": True,
+        "validate": "case {tmp} in *.json.deploy-tmp) /usr/bin/python3 -m json.tool {tmp} >/dev/null ;; *) bash -n {tmp} ;; esac",
+        "after": BILI_AFTER,
+    },
     "launchd": {
-        "dst": "~/Library/LaunchAgents", "files": ["com.litellm.proxy.plist", "com.llama-swap.plist"],
+        "dst": "~/Library/LaunchAgents",
+        "files": ["com.litellm.proxy.plist", "com.llama-swap.plist", "com.billion-context.bili.plist"],
         "validate": "plutil -lint {tmp} >/dev/null", "idle": True, "after": "launchd",
     },
     "wanda": {
@@ -197,7 +208,7 @@ def live(p):
 def tier_blocks():
     if TIERS.problems:
         sys.exit("litellm/tiers.conf has problems; fix them first:\n  " + "\n  ".join(TIERS.problems))
-    return ultron_tiers.blocks(TIERS)
+    return ultron_tiers.blocks(TIERS, cloud_base=env_file("OMNIROUTE_BASE"))
 
 
 def _block(indent, name):

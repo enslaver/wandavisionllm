@@ -9,6 +9,14 @@
     "icon": "llm.svg"
   },
   {
+    "id": "bili",
+    "name": "Compression",
+    "description": "billion-context: sessions and savings (read-only)",
+    "path": "/__bili/",
+    "launchd": "com.billion-context.bili",
+    "icon": "service.svg"
+  },
+  {
     "id": "comfy",
     "name": "ComfyUI",
     "description": "Image and video workflows",

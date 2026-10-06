@@ -47,6 +47,8 @@ cloud twin and isn't pinned; loading it unloads a tier, so in enforce mode its r
 for that tier to go idle, then for the memory gate (admit_direct). A loaded one never blocks a fit.
 Tiers, their model ids, queue limits, substitutes and cloud overflow: tiers.conf (ultron_tiers.py).
 Which agent sent a request (logged for Wanda): agents.conf.
+Compression (optional, ~/.ultron/bili-mode = on): the deployment hook's last step sends chat requests
+for routed tiers and cloud/<tier> through billion-context (bili) on 127.0.0.1:8787; see "bili" below.
 Design notes: docs/architecture.md and litellm/README.md.
 """
 
@@ -846,6 +848,18 @@ class UltronAdmit(CustomLogger):  # type: ignore[misc,valid-type]
                 write_trace(key, t["name"], kwargs["messages"], kwargs["tools"])
         except Exception as exc:
             _log({"ts": time.time(), "error": "trace: " + repr(exc)})
+        try:
+            target = bili_target(kwargs)
+            if target and bili_on() and await asyncio.to_thread(bili_alive):
+                cid = kwargs.get("litellm_call_id") or ""
+                kwargs["api_base"] = target
+                key = self.admission.keys.get(cid) or (t and _fallback_key(kwargs["messages"], t["name"]))
+                if key:
+                    kwargs["extra_headers"] = {**(kwargs.get("extra_headers") or {}), "x-acp-session": bili_session(key)}
+                if cid in self.admission.recent and "bili" not in self.admission.recent[cid]:  # hook can run twice per /v1/messages
+                    self.admission.recent[cid] += "; bili"
+        except Exception as exc:
+            _log({"ts": time.time(), "error": "bili: " + repr(exc)})
         return kwargs
 
 
@@ -1161,6 +1175,11 @@ BLANK_DELTA_PATCHED = patch_blank_delta_blocks()
 def chat_bridge(api_base: Any) -> bool:
     if os.environ.get("ULTRON_CHAT_BRIDGE", "on").strip().lower() in ("off", "0", "no", "false"):
         return False
+    return cloud_endpoint(api_base)
+
+
+def cloud_endpoint(api_base: Any) -> bool:
+    """api_base is the cloud endpoint (OMNIROUTE_BASE's host)."""
     cloud = urllib.parse.urlsplit(os.environ.get("OMNIROUTE_BASE") or "").netloc
     return bool(cloud) and urllib.parse.urlsplit(str(api_base or "")).netloc == cloud
 
@@ -1191,6 +1210,75 @@ def patch_omniroute_chat_bridge() -> bool:
 
 
 CHAT_BRIDGE_PATCHED = patch_omniroute_chat_bridge()
+
+
+# ----------------------------------------------------------------------------- bili (optional compression)
+# billion-context (bili: npm billion-context, LaunchAgent com.billion-context.bili on 127.0.0.1:8787, repo
+# bili/) compresses long conversations: it tags every message, adds a `compress` tool and ~4k tokens of
+# instructions, and once the model calls the tool it sends the model's summary in place of that range on
+# every later request. With ~/.ultron/bili-mode = on (default off), every chat request to a routed tier or a
+# cloud/<tier> overflow goes LiteLLM -> bili -> upstream through bili's zero-config route
+# (/bili/openai/<upstream base>), after admission and the history fixes above, so every client is covered
+# without changing it. x-acp-session carries the conversation key, so bili keeps one session per
+# conversation. routed = no models (the judge), media/* and embeddings go direct, and so does everything
+# while bili's LaunchAgent has no PID (not installed, stopped). x-ultron-route ends in "; bili".
+BILI_MODE_FILE = os.path.expanduser(os.environ.get("ULTRON_BILI_MODE_FILE", "~/.ultron/bili-mode"))
+BILI_URL = os.environ.get("ULTRON_BILI_URL", "http://127.0.0.1:8787")
+BILI_LABEL = "com.billion-context.bili"
+BILI_CHECK_S = 5
+_bili_alive = {"t": -BILI_CHECK_S, "ok": False}
+
+
+def bili_on() -> bool:
+    try:
+        return open(BILI_MODE_FILE).read().strip().lower() == "on"
+    except OSError:
+        return False
+
+
+def bili_alive() -> bool:
+    """Whether bili's LaunchAgent has a PID, checked at most every BILI_CHECK_S. launchctl, not an HTTP
+    probe: bili logs every connection it gets."""
+    now = time.monotonic()
+    if now - _bili_alive["t"] >= BILI_CHECK_S:
+        try:
+            out = subprocess.run(["launchctl", "list", BILI_LABEL], capture_output=True, text=True, timeout=2).stdout
+        except Exception:
+            out = ""
+        _bili_alive.update(t=now, ok=bool(re.search(r'"PID" = \d+;', out)))
+    return bool(_bili_alive["ok"])
+
+
+def _model_group(kwargs: dict[str, Any]) -> str:
+    for k in ("metadata", "litellm_metadata"):
+        md = kwargs.get(k)
+        if isinstance(md, dict) and md.get("model_group"):
+            return str(md["model_group"])
+    return ""
+
+
+def bili_target(kwargs: dict[str, Any]) -> str | None:
+    """bili's URL for this chat request's upstream, or None when it goes direct (or already goes to bili)."""
+    base = str(kwargs.get("api_base") or "")
+    if not base or base.startswith(BILI_URL) or not isinstance(kwargs.get("messages"), list):
+        return None
+    t = _local_tier(kwargs)
+    if t:
+        if not t["routed"]:
+            return None
+    elif not cloud_endpoint(base):
+        return None
+    else:
+        group = _model_group(kwargs)
+        clouds = {x["cloud"] for x in tiers().tier.values() if x["cloud"]}
+        if not (group.startswith("cloud/") or (not group and str(kwargs.get("model") or "").split("/", 1)[-1] in clouds)):
+            return None
+    return f"{BILI_URL}/bili/openai/{base}"
+
+
+def bili_session(key: str) -> str:
+    """x-acp-session for a conversation key. bili names files after it, so no ':' or '/'."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", key)[:120]
 
 
 # ----------------------------------------------------------------------------- tool schemas

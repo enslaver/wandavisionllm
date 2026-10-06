@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import configparser
 import fnmatch
+import json
 import os
 import re
 from typing import Any
@@ -200,7 +201,23 @@ def _local_entry(model_name: str, t: dict[str, Any]) -> list[str]:
     return out
 
 
-def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
+def _bili(t: Tiers, cloud_base: str) -> list[str]:
+    """bili/config.json's network and providers keys. bili only needs each upstream model's context
+    window (LiteLLM's max_input_tokens, so it compresses before LiteLLM would refuse); it routes by the
+    upstream base in the request path. The judge never goes through bili. cloud_base: OMNIROUTE_BASE."""
+    routed = t.routed()
+    providers = {SWAP_API[:-len("/v1")]: {"models": {n: {"context": t.tier[n]["context"]} for n in routed}}}
+    clouds = {t.tier[n]["cloud"]: {"context": t.tier[n]["context"]} for n in routed if t.tier[n]["cloud"]}
+    base = re.sub(r"/v1$", "", cloud_base.strip().rstrip("/"))
+    if base and clouds:
+        providers[base] = {"models": clouds}
+    # never cut a request LiteLLM still waits for (cold long prefills take minutes)
+    wait_s = max([t.tier[n]["timeout"] for n in routed] + [1800])
+    return ['"network": ' + json.dumps({"upstreamTimeoutMs": wait_s * 1000}) + ",",
+            '"providers": ' + json.dumps(providers, indent=2) + ","]
+
+
+def blocks(t: Tiers, home: str = "__HOME__", cloud_base: str = "") -> dict[str, str]:
     """Generated config blocks, keyed by the placeholder that marks where each goes."""
     names = t.names
     lm: list[str] = ["# --- local tiers, advertised in /v1/models ---"]
@@ -264,4 +281,5 @@ def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
     return {"__TIERS_MODEL_LIST__": "\n".join(lm), "__TIERS_FALLBACKS__": "\n".join(fb),
             "__TIERS_ALIASES__": "\n".join(alias), "__TIERS_RETRY_POLICY__": "\n".join(retry),
             "__TIERS_SWAP_MODELS__": "\n".join(sw),
-            "__TIERS_SWAP_HOOKS__": "\n".join(hooks), "__TIERS_SWAP_ROUTING__": "\n".join(routing)}
+            "__TIERS_SWAP_HOOKS__": "\n".join(hooks), "__TIERS_SWAP_ROUTING__": "\n".join(routing),
+            "__TIERS_BILI__": "\n".join(_bili(t, cloud_base))}

@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional context compression with [billion-context](https://github.com/ranxianglei/billion-context)
+  (`bili`), installed once behind LiteLLM. With `~/.ultron/bili-mode` set to `on` (Wanda: Controls &
+  routing → Compression; off by default), chat requests for the routed tiers and `cloud/*` go through
+  bili on `127.0.0.1:8787`. bili folds long conversations into the model's own summaries, keeping one
+  session per conversation. Requests go direct while bili isn't installed or running.
+  - New `bili` deploy component (`start.sh`, plus a `config.json` filled in from `tiers.conf`) and a
+    `com.billion-context.bili` LaunchAgent.
+  - Caddy serves bili's UI read-only at `/__bili/`.
+  - `x-ultron-route` ends in `; bili` when a request went through it.
+- Wanda: a `services.json` entry with `"launchd": "<label>"` gets its status light from that
+  LaunchAgent's PID instead of an HTTP probe.
+- `lora/`:
+  - `CACHE_FROM=<round> lora/run.sh <name>` starts a round from an earlier round's samples (no
+    sampling, fresh split).
+  - `unsloth_vision.py --data` rows without `image` train as text-only rows.
+
+### Changed
+
+- `lora/make_dataset.py` holds out whole conversations for the validation split instead of single
+  points, which shared most of their prompt with training rows.
+
+### Fixed
+
+- `lora/train.py` no longer trains on the pad token after each answer. mlx_lm's default mask
+  included it: about 42% of the training loss on a sonnet round went to predicting the pad.
+  `lora/test_train_loss.py` pins the fix.
+- `lora/unsloth_queue.sh` passes the Windows Python a Windows path to `unsloth_vision.py` under Git
+  Bash.
+
 ## [0.2.0] - 2026-10-04
 
 ### Added

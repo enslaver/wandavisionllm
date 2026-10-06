@@ -76,7 +76,8 @@ Mac: [docs/hardware.md](docs/hardware.md).
 | `mtplx/bin/` | `~/.mtplx/bin/` | one launch script per tier; swap a model by editing one line |
 | [`wanda/`](wanda/README.md) | `~/wanda/` | the dashboard (stdlib Python + one HTML page) |
 | `caddy/` | `/opt/homebrew/etc/` | HTTPS front door: Wanda at `/`, LiteLLM at `/llm/`, media at `/media/` |
-| `launchd/` | `~/Library/LaunchAgents/` | keeps LiteLLM and llama-swap running |
+| `launchd/` | `~/Library/LaunchAgents/` | keeps LiteLLM, llama-swap and (if installed) bili running |
+| `bili/` | `~/.bili/` | optional: [billion-context](https://github.com/ranxianglei/billion-context) compression behind LiteLLM, off until you switch it on ([litellm/README.md](litellm/README.md#compression-bili-off-by-default)) |
 | `bin/` | `~/bin/` | `backup-stack.sh` |
 | [`Vision/`](Vision/README.md) | `~/.litellm/` (the media hook) | images and video: the media hook, an image judge (`ultron/judge`) and its ranking tool, ComfyUI workflows, Open WebUI tools |
 | [`gpu-box/`](gpu-box/README.md) | a Windows PC with an NVIDIA GPU (optional) | sets up ComfyUI and Unsloth there: `python gpu-box\deploy.py` |
