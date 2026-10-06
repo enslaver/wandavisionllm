@@ -1,5 +1,5 @@
 # Everything CI runs, runnable locally. Needs uv (https://docs.astral.sh/uv/).
-.PHONY: all test lint check shellcheck render
+.PHONY: all test test-lora lint check shellcheck render
 
 all: lint test check
 
@@ -7,6 +7,9 @@ test:
 	cd litellm && uvx --with pyyaml pytest -q -p no:cacheprovider
 	cd Vision/media && uvx --with pyyaml pytest -q -p no:cacheprovider
 	cd gpu-box && uvx pytest -q -p no:cacheprovider
+
+test-lora:  ## lora/ tests need MLX (Apple Silicon): run in the lora venv (lora/README.md, Setup)
+	cd lora && ~/lora/.venv/bin/python -m pytest -q -p no:cacheprovider
 
 lint:
 	uvx ruff check .

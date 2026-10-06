@@ -212,7 +212,7 @@ def main():
             d = json.loads(l); cache[d["key"]] = d
     examples, convs, used = [], [], set()
     stats = {"traces": 0, "other_tier": 0, "points": 0, "kept": 0, "no_pass": 0, "poisoned": 0, "duplicate": 0,
-             "too_long": 0}
+             "too_long": 0, "uncached": 0}
     tok, limit = seq_limit()
     for tp in a.traces:
         tr = json.load(open(tp))
@@ -238,7 +238,8 @@ def main():
                 stats["duplicate"] += 1
                 continue
             used.add(key)
-            if key not in cache and a.no_sample:
+            if key not in cache and a.no_sample:  # e.g. CACHE_FROM after the conversation grew: its prompts changed
+                stats["uncached"] += 1
                 continue
             if key not in cache:
                 cands = []
@@ -291,6 +292,12 @@ def main():
         if n + size[c] <= 2 * want:
             held.add(c)
             n += size[c]
+    if not held and len(size) > 1:  # every conversation is over twice the share: hold out the smallest
+        held.add(min(order, key=lambda c: size[c]))
+    if len(size) == 1 and len(examples) > 1:  # one conversation: split by point (valid then shares prompts)
+        print("make_dataset: one conversation; valid is split by point and overlaps train", file=sys.stderr)
+        convs = [f"{c}#{i}" for i, c in enumerate(convs)]
+        held = set(random.Random(0).sample(convs, max(1, int(len(convs) * a.valid))))
     split = {"valid": [e for e, c in zip(examples, convs) if c in held],
              "train": [e for e, c in zip(examples, convs) if c not in held]}
     random.Random(0).shuffle(split["train"])
