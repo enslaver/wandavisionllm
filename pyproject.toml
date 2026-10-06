@@ -1,7 +1,7 @@
 # Tooling config only: nothing here is installed. Deployed files are Python 3.9, standard library only.
 [project]
 name = "wandavision"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local-first LLM stack for Apple Silicon Macs: Claude-compatible tiers, agent-safety hooks, and a realtime dashboard."
 requires-python = ">=3.9"
 license = "MIT"
