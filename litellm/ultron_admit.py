@@ -687,10 +687,14 @@ class Admission:
             return await self.admit_direct(data, call_type, mode, tier)
         if tier is None:  # the client asked for cloud/<tier> itself: no decision, but log the traffic
             ctier = str(model).split("/", 1)[1] if "/" in str(model) else "?"
+            ident, cid = pin_identity(data, ctier), data.get("litellm_call_id")
             _log({"ts": time.time(), "mode": mode, "applied": True, "requested": model, "tier": ctier, "target": model,
-                  "endpoint": model, "rule": "explicit", "new": False, "key": pin_identity(data, ctier)["key"],
-                  "call_id": data.get("litellm_call_id"),
-                  "main": pin_identity(data, ctier)["main"], "call_type": call_type, **client_info(data)})
+                  "endpoint": model, "rule": "explicit", "new": False, "key": ident["key"], "call_id": cid,
+                  "main": ident["main"], "call_type": call_type, **client_info(data)})
+            if cid:  # the conversation key bili sessions on (x-acp-session), as for admitted requests
+                self.keys[cid] = ident["key"]
+                while len(self.keys) > 512:
+                    self.keys.popitem(last=False)
             return None
         h = _headers(data)
         x_route = h.get("x-route", "").strip().lower()

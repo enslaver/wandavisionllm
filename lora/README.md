@@ -80,13 +80,16 @@ For every trace of `--tier` (default `sonnet`):
    earlier round's cache that way: same points, fresh split, no sampling).
 
 The last line prints the counts: `traces`, `other_tier`, `points`, `kept`, `no_pass`, `poisoned`,
-`duplicate`, `too_long`, `conversations`.
+`duplicate`, `too_long`, `uncached` (points `--no-sample` skipped: not in the cache, e.g. a conversation
+that grew since the `CACHE_FROM` round), `conversations`. If no conversation fits the valid share, the
+smallest one is held out; with a single conversation the split falls back to per point.
 
 ### 3. Training (`train.py`, `<tier>.yaml`)
 
 QLoRA on the same 4-bit weights the tier serves (a text-only view of the MTPLX pack, see setup).
 The loss covers the chosen turn only and stops at its last token: mlx_lm's own mask also trains the
 pad after it (see [Results so far](#results-so-far), "The loss mask"; `test_train_loss.py` pins it).
+`make test-lora` runs it (and any other `lora/test_*.py`) in `~/lora/.venv`; CI can't, it needs MLX.
 `train.py` takes every `mlx_lm.lora` flag (`--iters`, `--save-every`, `--learning-rate`, …).
 Checkpoints land in `runs/<name>/00000NN_adapters.safetensors`.
 

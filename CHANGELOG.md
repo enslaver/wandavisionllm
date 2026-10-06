@@ -19,17 +19,21 @@ All notable changes to this project are documented here. The format follows
     `com.billion-context.bili` LaunchAgent.
   - Caddy serves bili's UI read-only at `/__bili/`.
   - `x-ultron-route` ends in `; bili` when a request went through it.
+  - Requests a client sends to `cloud/<tier>` itself also keep one bili session per conversation.
 - Wanda: a `services.json` entry with `"launchd": "<label>"` gets its status light from that
   LaunchAgent's PID instead of an HTTP probe.
 - `lora/`:
   - `CACHE_FROM=<round> lora/run.sh <name>` starts a round from an earlier round's samples (no
     sampling, fresh split).
   - `unsloth_vision.py --data` rows without `image` train as text-only rows.
+  - `make test-lora` runs the `lora/` tests in `~/lora/.venv` (they need MLX, so CI skips them).
 
 ### Changed
 
 - `lora/make_dataset.py` holds out whole conversations for the validation split instead of single
-  points, which shared most of their prompt with training rows.
+  points, which shared most of their prompt with training rows. It holds out the smallest
+  conversation when none fits the share, and splits by point when there is only one. Points that
+  `--no-sample` skips are counted as `uncached`.
 
 ### Fixed
 

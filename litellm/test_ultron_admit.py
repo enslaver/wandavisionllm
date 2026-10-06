@@ -1011,6 +1011,16 @@ def test_bili_routes_chat_to_routed_tiers_and_cloud(tmp_path, monkeypatch):
     assert run(f"hosted_vllm/{big}", local)["api_base"] == local  # bili down -> direct
 
 
+def test_explicit_cloud_request_keeps_its_conversation_key():
+    # bili's x-acp-session comes from admission's key; a client that asks for cloud/<tier> itself gets one too
+    t = ua.tiers()
+    tier = next(n for n in t.routed() if t.tier[n]["cloud"])
+    hook = ua.UltronAdmit()
+    data = {"model": f"cloud/{tier}", "messages": [{"role": "user", "content": "go"}], "litellm_call_id": "cid-9"}
+    assert asyncio.run(hook.admission.admit(data, "acompletion", "shadow")) is None
+    assert hook.admission.keys["cid-9"] == ua.pin_identity(data, tier)["key"]
+
+
 def test_bili_session_is_a_safe_filename():
     assert ua.bili_session("cc:abc/def:main") == "cc-abc-def-main"
     assert len(ua.bili_session("x" * 500)) == 120
