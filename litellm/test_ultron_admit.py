@@ -1344,8 +1344,9 @@ def test_history_reasoning_content_for_fable():
 
 
 def test_hosted_vllm_keeps_reasoning_content_only_for_fable():
-    pytest.importorskip("litellm")
-    from litellm.llms.hosted_vllm.chat.transformation import HostedVLLMChatConfig
+    # the repo's litellm/ folder is importable as a namespace package, so check the module itself
+    mod = pytest.importorskip("litellm.llms.hosted_vllm.chat.transformation")
+    HostedVLLMChatConfig = mod.HostedVLLMChatConfig
     assert ua.HOSTED_VLLM_REASONING_PATCHED
     cfg = HostedVLLMChatConfig()
     msgs = lambda: [{"role": "user", "content": "hi"},
