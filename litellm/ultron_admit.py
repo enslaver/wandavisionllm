@@ -86,6 +86,7 @@ DECISIONS_MODEL = os.environ.get("ULTRON_DECISIONS_MODEL", "")
 
 # Per-tier behaviour comes from tiers.conf and is read where it is used: think_in_content and
 # reasoning_content per tier in the request path, `effort` for the mtplx tiers (see EFFORT_BUDGETS).
+SESSION_CLAIM_GRACE_S = 3.0  # a session claim counts as in flight this long, before the stats file lists the request
 PIN_IDLE_S = {"main": 3600, "sub": 1800}
 EVICT_WAIT_MAX_S = 300  # local only: wait at most this long for a tier to go idle, then swap (< client timeouts)
 # Cloud is the last resort: a new conversation joins a local queue up to the tier's max_waiting (tiers.conf,
@@ -684,6 +685,7 @@ class Admission:
         self.mocked: OrderedDict[str, str] = OrderedDict()  # litellm_call_id -> hook that answered it (mock_response)
         self.sessions: OrderedDict[str, str] = OrderedDict()  # mtplx session id -> litellm_call_id last sent on it
         self._sessions_lock = threading.Lock()  # take_session runs on worker threads
+        self._session_claimed: dict[str, float] = {}  # litellm_call_id -> when it took a session (not yet in the in-flight file)
 
     def take_session(self, session: str, cid: str) -> bool:
         """Whether this request may use the conversation's named mtplx session. mtplx answers 409 to a second
@@ -691,9 +693,13 @@ class Admission:
         flight to a local tier (ultron_stats' in-flight file) this one goes without (anon, as before)."""
         inflight = {c for cids in litellm_inflight().values() for c in cids}
         with self._sessions_lock:  # check and claim together: two requests must not both see the old owner
+            now = time.time()
+            self._session_claimed = {c: t for c, t in self._session_claimed.items() if now - t < SESSION_CLAIM_GRACE_S}
             owner = self.sessions.get(session)
-            if owner and owner != cid and owner in inflight:
+            # the owner's request shows in the in-flight file only after it starts: until then count its claim
+            if owner and owner != cid and (owner in inflight or owner in self._session_claimed):
                 return False
+            self._session_claimed[cid] = now
             self.sessions[session] = cid
             self.sessions.move_to_end(session)
             while len(self.sessions) > 2048:
