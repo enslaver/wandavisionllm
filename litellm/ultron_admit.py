@@ -68,6 +68,7 @@ import re
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -682,19 +683,22 @@ class Admission:
         self.refused: dict[str, float] = {}  # conversation key -> until when mtplx's memory refusal keeps it on cloud
         self.mocked: OrderedDict[str, str] = OrderedDict()  # litellm_call_id -> hook that answered it (mock_response)
         self.sessions: OrderedDict[str, str] = OrderedDict()  # mtplx session id -> litellm_call_id last sent on it
+        self._sessions_lock = threading.Lock()  # take_session runs on worker threads
 
     def take_session(self, session: str, cid: str) -> bool:
         """Whether this request may use the conversation's named mtplx session. mtplx answers 409 to a second
         request in flight on one named session, so while another request of the conversation is still in
         flight to a local tier (ultron_stats' in-flight file) this one goes without (anon, as before)."""
-        owner = self.sessions.get(session)
-        if owner and owner != cid and owner in {c for cids in litellm_inflight().values() for c in cids}:
-            return False
-        self.sessions[session] = cid
-        self.sessions.move_to_end(session)
-        while len(self.sessions) > 2048:
-            self.sessions.popitem(last=False)
-        return True
+        inflight = {c for cids in litellm_inflight().values() for c in cids}
+        with self._sessions_lock:  # check and claim together: two requests must not both see the old owner
+            owner = self.sessions.get(session)
+            if owner and owner != cid and owner in inflight:
+                return False
+            self.sessions[session] = cid
+            self.sessions.move_to_end(session)
+            while len(self.sessions) > 2048:
+                self.sessions.popitem(last=False)
+            return True
 
 
     @property
@@ -939,7 +943,8 @@ class Admission:
         async with self.lock:
             pins.expire(now)
             pin = pins.get(pin_mode, ident["key"])
-            if pin is not None and tier != req_tier and pin["target"].startswith("ultron/"):
+            if (pin is not None and pin["target"].startswith("ultron/")
+                    and (tier != req_tier or (tier_lock() and req_tier in ("fable", "opus")))):
                 pin = dict(pin, target=f"ultron/{tier}")  # lock moved the conversation onto the locked tier
             if pin is not None and swapping and pin["target"].startswith("ultron/"):
                 pin = None  # re-decide: the swap sends it to cloud until the locked tier is up
@@ -950,7 +955,8 @@ class Admission:
                 self.pending = {t: ts for t, ts in self.pending.items() if now - ts < PENDING_LOAD_S}
                 reserved = pins.main_local_tiers(pin_mode) | set(self.pending)
                 back = decide(tier, st, reserved, x_route, rmode, sets)
-                if swapping and back[0].startswith("ultron/") and x_route != "private":
+                if (swapping and back[0].startswith("ultron/") and x_route != "private" and rmode != "local-only"
+                        and cloud_for(req_tier)):
                     back = (f"cloud/{req_tier}", "route-mode:tier-lock-swap")
                 elif back[0].startswith("cloud/"):
                     back = (f"cloud/{req_tier}", back[1])  # OmniRoute twin of what the client asked for
@@ -977,7 +983,9 @@ class Admission:
         waited: list[str] = []
         overflow = shed_why = backlog_why = None
         cloud_ok = x_route != "private" and rmode != "local-only"
-        if target.startswith("ultron/") and rmode == "cloud-only" and x_route != "private":
+        if target.startswith("ultron/") and not cloud_for(target.split("/")[1]):
+            cloud_ok = False  # no cloud model (or OMNIROUTE_BASE empty) for this tier: nothing to overflow to
+        if target.startswith("ultron/") and rmode == "cloud-only" and x_route != "private" and cloud_ok:
             # The switch moves live conversations too, this request only (the pin stays): decide() covers new ones,
             # and a local pin used to reload the tier the operator had just unloaded (2026-10-08).
             target, apply, overflow = f"cloud/{target.split('/')[1]}", True, "route-mode"
@@ -1520,10 +1528,10 @@ def _no_arguments(call: Any) -> bool:
         return False
 
 def _tools_needing_arguments(tools: Any) -> set[str]:
-    """Names of declared tools whose schema has properties or required fields, so a call must carry arguments.
+    """Names of declared tools whose schema has required fields, so a call must carry arguments.
 
-    A zero-argument tool (`murmur_check_messages`, `whoami`, `monolith_guide`) is called with `{}` by design,
-    so dropping those calls would delete real work and its results."""
+    A tool without required fields (zero-argument ones like `whoami`, or ones with only optional filters) is
+    validly called with `{}`, so dropping those calls would delete real work and its results."""
     names: set[str] = set()
     for t in tools or []:
         fn = t.get("function") if isinstance(t, dict) else None
@@ -1531,7 +1539,7 @@ def _tools_needing_arguments(tools: Any) -> set[str]:
             fn = t if isinstance(t, dict) else {}
         name = fn.get("name")
         params = fn.get("parameters") or fn.get("input_schema") or {}
-        if name and isinstance(params, dict) and (params.get("properties") or params.get("required")):
+        if name and isinstance(params, dict) and params.get("required"):
             names.add(name)
     return names
 
@@ -1547,7 +1555,7 @@ def drop_empty_tool_calls(messages: list[Any], tools: Any = None) -> list[Any]:
     2026-10-14, after sweeping every tier's traces: the shape is not fable's alone (opus 161, sonnet 125 empty
     calls whose declared schema needs arguments), but 19 opus / 39 sonnet / 2 haiku empties are legitimate
     zero-argument tools (`monolith_guide` 193, `murmur_check_messages` 20, `whoami` 2). A call is dropped only
-    when its tool is declared with properties or required; with no `tools` passed, every empty call goes."""
+    when its tool is declared with required fields; with no `tools` passed, every empty call goes."""
     needs = _tools_needing_arguments(tools)
     dropped: set[str] = set()
     out: list[Any] = []

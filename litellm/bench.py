@@ -6,7 +6,8 @@
 
 Every request goes through LiteLLM with `x-route: private` (local only, no cloud fallback) at
 reasoning_effort=medium, so the hooks, defaults and thinking budgets are the ones real clients get.
-Reasoning and coding are graded by machine (exact answer / unit tests in a subprocess); tool
+Reasoning and coding are graded by machine (exact answer / unit tests in a subprocess; the coding
+section runs model-generated code unsandboxed and needs --allow-generated-code); tool
 calling is graded on the call itself (name, argument values and types). stdlib only.
 """
 import argparse
@@ -141,6 +142,8 @@ def parse_calls(r):
             args = json.loads(fn.get("arguments") or "{}")
         except ValueError:
             args = None
+        if not isinstance(args, dict):
+            args = None  # valid JSON of the wrong shape counts as a failed call, not a grader crash
         out.append((fn.get("name"), args))
     return out
 
@@ -268,7 +271,8 @@ def run_tests(code, tests):
         p = os.path.join(d, "t.py")
         open(p, "w").write(code + "\n\n" + tests + "\nprint('PASS')\n")
         try:
-            out = subprocess.run([sys.executable, "-I", p], capture_output=True, text=True, timeout=20, cwd=d)
+            env = {"PATH": "/usr/bin:/bin", "HOME": d}  # none of the invoking user's credentials
+            out = subprocess.run([sys.executable, "-I", p], capture_output=True, text=True, timeout=20, cwd=d, env=env)
         except subprocess.TimeoutExpired:
             return False, "timeout"
         if out.returncode == 0 and "PASS" in out.stdout:
@@ -326,8 +330,13 @@ def main():
     ap.add_argument("models", nargs="+")
     ap.add_argument("--out-dir", default=".")
     ap.add_argument("--effort", default=EFFORT, help="reasoning_effort for every request")
-    ap.add_argument("--sections", default="reasoning,tools,coding")
+    ap.add_argument("--sections", default="reasoning,tools", help="add coding to run the coding tests")
+    ap.add_argument("--allow-generated-code", action="store_true",
+                    help="required for the coding section: it runs the model's code as you, with no sandbox")
     a = ap.parse_args()
+    if "coding" in a.sections.split(",") and not a.allow_generated_code:
+        ap.error("the coding section runs model-generated Python on this machine with your file and network "
+                 "access; pass --allow-generated-code to accept that (best on a throwaway user or VM)")
     EFFORT = a.effort
     os.makedirs(a.out_dir, exist_ok=True)
     for m in a.models:

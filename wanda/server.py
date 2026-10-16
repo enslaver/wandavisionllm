@@ -755,7 +755,7 @@ def routing_stats():
     new_h1 = [r for r in h1 if r.get("new")]
     why = {}
     for r in h1:
-        if str(r["target"]).startswith("cloud/"):
+        if str(r["target"]).startswith("cloud/") and r.get("applied"):  # shadow rows only propose
             k = cloud_reason(r)
             why[k] = why.get(k, 0) + 1
     fallbacks = sum(1 for r in ADMIT_ROWS.rows if r.get("event") == "fallback" and r.get("ts", 0) >= now - 3600)
