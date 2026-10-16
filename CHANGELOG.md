@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-16
+
+Includes everything prepared as 0.3.0, which was never tagged or published.
+
 ### Added
 
 - Optional **Headroom** compression of every chat request, in-process (`ultron_headroom`; `pip install
@@ -34,7 +38,7 @@ All notable changes to this project are documented here. The format follows
   10 minutes idle (`ttl = 600`), sonnet effort capped at `high`.
 - Loop breaker also catches a call that recurs among other calls.
 
-## [0.3.0] - 2026-10-06
+## [0.3.0] - 2026-10-06 (not tagged; released as 0.4.0)
 
 ### Added
 
@@ -188,7 +192,8 @@ First public release.
 - CI (tests on Python 3.9 and 3.12, ruff, shell syntax, config rendering and validation) and a
   tag-driven release workflow.
 
-[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.3.0
+[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.4.0
+[0.3.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/enslaver/wandavisionllm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/enslaver/wandavisionllm/releases/tag/v0.1.0
