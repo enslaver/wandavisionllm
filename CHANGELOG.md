@@ -8,8 +8,6 @@ All notable changes to this project are documented here. The format follows
 
 ## [0.4.0] - 2026-10-16
 
-Includes everything prepared as 0.3.0, which was never tagged or published.
-
 ### Added
 
 - Optional **Headroom** compression of every chat request, in-process (`ultron_headroom`; `pip install
@@ -25,33 +23,6 @@ Includes everything prepared as 0.3.0, which was never tagged or published.
 - Drops tool calls with empty arguments from history when the request's tool schemas require arguments.
 - `litellm/bench.py` tier benchmark (its coding section runs model-generated code unsandboxed and needs
   `--allow-generated-code`); Wanda tiles for why requests went to the cloud.
-- Media hook tries a local ComfyUI first (`ULTRON_COMFY_URL`); optional Decisions API pass-through and a
-  decide server for the image judge (`Vision/judge/serve_decide_mlx.py`).
-
-### Changed
-
-- **Replaces the optional bili compression** (0.3.0) with Headroom: the `bili` component, LaunchAgent, Caddy
-  route and Wanda switch are gone.
-- Fable now runs on Splash (`brew install incoai/tap/splash`); the TensorFold script stays as
-  `tier-fable-tensorfold.sh` for rollback.
-- Example tiers: context 229376 with a 32768-token output cap, session banks 4/4/3 GB, sonnet unloads after
-  10 minutes idle (`ttl = 600`), sonnet effort capped at `high`.
-- Loop breaker also catches a call that recurs among other calls.
-
-## [0.3.0] - 2026-10-06 (not tagged; released as 0.4.0)
-
-### Added
-
-- Optional context compression with [billion-context](https://github.com/ranxianglei/billion-context)
-  (`bili`), installed once behind LiteLLM. With `~/.ultron/bili-mode` set to `on` (Wanda: Controls &
-  routing → Compression; off by default), chat requests for the routed tiers and `cloud/*` go through
-  bili on `127.0.0.1:8787`. bili folds long conversations into the model's own summaries, keeping one
-  session per conversation. Requests go direct while bili isn't installed or running.
-  - New `bili` deploy component (`start.sh`, plus a `config.json` filled in from `tiers.conf`) and a
-    `com.billion-context.bili` LaunchAgent.
-  - Caddy serves bili's UI read-only at `/__bili/`.
-  - `x-ultron-route` ends in `; bili` when a request went through it.
-  - Requests a client sends to `cloud/<tier>` itself also keep one bili session per conversation.
 - Wanda: a `services.json` entry with `"launchd": "<label>"` gets its status light from that
   LaunchAgent's PID instead of an HTTP probe.
 - `lora/`:
@@ -59,9 +30,16 @@ Includes everything prepared as 0.3.0, which was never tagged or published.
     sampling, fresh split).
   - `unsloth_vision.py --data` rows without `image` train as text-only rows.
   - `make test-lora` runs the `lora/` tests in `~/lora/.venv` (they need MLX, so CI skips them).
+- Media hook tries a local ComfyUI first (`ULTRON_COMFY_URL`); optional Decisions API pass-through and a
+  decide server for the image judge (`Vision/judge/serve_decide_mlx.py`).
 
 ### Changed
 
+- Fable now runs on Splash (`brew install incoai/tap/splash`); the TensorFold script stays as
+  `tier-fable-tensorfold.sh` for rollback.
+- Example tiers: context 229376 with a 32768-token output cap, session banks 4/4/3 GB, sonnet unloads after
+  10 minutes idle (`ttl = 600`), sonnet effort capped at `high`.
+- Loop breaker also catches a call that recurs among other calls.
 - `lora/make_dataset.py` holds out whole conversations for the validation split instead of single
   points, which shared most of their prompt with training rows. It holds out the smallest
   conversation when none fits the share, and splits by point when there is only one. Points that
@@ -194,6 +172,5 @@ First public release.
 
 [Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.4.0
-[0.3.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/enslaver/wandavisionllm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/enslaver/wandavisionllm/releases/tag/v0.1.0
