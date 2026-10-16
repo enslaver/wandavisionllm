@@ -28,6 +28,8 @@ import asyncio
 import fnmatch
 import json
 import os
+import re
+import subprocess
 import time
 from collections import OrderedDict
 from typing import Any
@@ -100,10 +102,25 @@ class Endpoints:
         for pat, ep in self.patterns:
             if fnmatch.fnmatchcase(m, pat):
                 return ep
-        return f"?/{m}"
+        return m if m.startswith("cloud/") else f"?/{m}"   # cloud/decisions: a pass-through, no model entry
 
 
 ENDPOINTS = Endpoints(CONFIG)
+
+
+def decide_call_id(data: dict[str, Any], call_type: str) -> str | None:
+    """The call id of a POST /judge/v1/decide pass-through, else None (ultron_admit.decide_call_id, kept in step)."""
+    if call_type != "pass_through_endpoint" or data.get("kind") not in ("noul", "score", "choice") or "question" not in data:
+        return None
+    return str(getattr(data.get("litellm_logging_obj"), "litellm_call_id", None) or "")
+
+
+def decisions_call_id(data: dict[str, Any], call_type: str) -> str | None:
+    """The call id of a POST /decide/v1/systemone pass-through (a Decisions API body: `questions`), else None
+    (as ultron_admit.default_decisions_model recognises it)."""
+    if call_type != "pass_through_endpoint" or not isinstance(data.get("questions"), (dict, list)):
+        return None
+    return str(getattr(data.get("litellm_logging_obj"), "litellm_call_id", None) or "")
 
 
 # ----------------------------------------------------------------------------- chunk parsing
@@ -248,6 +265,42 @@ def _prompt_chars(data: dict[str, Any]) -> int:
     return n
 
 
+def row_endpoint_local(r: "Req") -> bool:
+    try:
+        return r.endpoint().startswith("ultron/")
+    except Exception:
+        return False
+
+
+MEM_SYSCTLS = ("hw.pagesize", "vm.page_free_count", "vm.page_pageable_external_count", "vm.page_speculative_count",
+               "vm.page_purgeable_count", "vm.compressor_bytes_used", "vm.swapusage")
+
+
+def mem_end() -> dict[str, float]:
+    """Memory when a local request finished, to set against the admission row (ultron-admit.jsonl): headroom
+    as ultron_admit.read_mem counts it, swap and compressor in use. Its own sysctl (~2 ms) rather than
+    importing ultron_admit, whose import patches LiteLLM. {} on any error."""
+    try:
+        out = subprocess.run(["sysctl", *MEM_SYSCTLS], capture_output=True, text=True, timeout=1).stdout
+    except Exception:
+        return {}
+    v = {}
+    for line in out.splitlines():
+        k, _, val = line.partition(":")
+        if val.strip().isdigit():
+            v[k.strip()] = int(val.strip())
+    swap = re.search(r"vm\.swapusage:.*?used = ([\d.]+)M", out)
+    gb = lambda b: round(b / 2**30, 1)
+    row = {}
+    if "vm.page_free_count" in v:
+        row["headroom_end_gb"] = gb(sum(v.get(k, 0) for k in MEM_SYSCTLS[1:5]) * v.get("hw.pagesize", 16384))
+    if swap:
+        row["swap_end_gb"] = gb(float(swap.group(1)) * 2**20)
+    if "vm.compressor_bytes_used" in v:
+        row["compressor_end_gb"] = gb(v["vm.compressor_bytes_used"])
+    return row
+
+
 def _p(rows: list[float], q: float) -> float | None:
     if not rows:
         return None
@@ -377,6 +430,8 @@ class Tracker:
         else:
             ttft, span = (seen if r.stream else None), ((r.t_last - r.t_first) if r.t_first and r.t_last else 0)
         wait = (r.llm_start - r.t0) if r.llm_start else None
+        h = (r.data.get("proxy_server_request") or {}).get("headers") or {}
+        harness = next((str(v) for k, v in h.items() if str(k).lower() == "x-harness-call-id"), None)
         row = {
             "ts": round(end, 3), "t0": round(r.t0, 3), "call_id": r.cid, "call_type": r.call_type, "stream": r.stream,
             "requested": r.requested, "model": str(r.data.get("model") or r.requested), "endpoint": r.endpoint(),
@@ -390,6 +445,8 @@ class Tracker:
             "decode_tok_s": round(g / span, 1) if g and g > 1 and span > 0.5 else None,
             "prefill_tok_s": round((prompt - cached) / ttft, 1) if prompt and ttft and ttft > 0.2 and prompt > cached else None,
             "e2e_tok_s": round(g / (end - r.t0), 1) if g and end > r.t0 else None,
+            "harness_call_id": harness,  # a client's own per-call id as in ultron-admit.jsonl
+            **(mem_end() if row_endpoint_local(r) else {}),
         }
         return {k: v for k, v in row.items() if v is not None}
 
@@ -453,7 +510,16 @@ class UltronStats(CustomLogger):  # type: ignore[misc,valid-type]
 
     async def async_pre_call_hook(self, user_api_key_dict, cache, data, call_type):
         try:
-            self.t.start(data, str(call_type))
+            if call_type == "pass_through_endpoint":
+                # POST /judge/v1/decide: list it as ultron/judge in flight, as
+                # for an ultron/judge chat call. Its body has no model or call id; a copy carries both.
+                cid = decide_call_id(data, call_type)
+                if cid:
+                    self.t.start(dict(data, model="ultron/judge", litellm_call_id=cid), str(call_type))
+                elif cid := decisions_call_id(data, call_type):   # /decide/v1/systemone: billed per call
+                    self.t.start(dict(data, model="cloud/decisions", litellm_call_id=cid), str(call_type))
+            else:
+                self.t.start(data, str(call_type))
         except Exception:
             pass
         return data

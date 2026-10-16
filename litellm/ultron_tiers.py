@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import configparser
 import fnmatch
-import json
 import os
 import re
 from typing import Any
@@ -21,10 +20,12 @@ SWAP_API = "http://127.0.0.1:8001/v1"   # llama-swap (launchd/com.llama-swap.pli
 COLORS = ["#c39bd3", "#88c0d0", "#a3be8c", "#ebcb8b", "#d08770", "#b48ead", "#8fbcbb"]
 
 TIER_KEYS = {"script", "ttl", "preload", "evict_cost", "context", "vision", "chat_only", "think_in_content",
+             "reasoning_content", "reasoning_effort", "effort", "effort_cap", "max_output_tokens", "check_endpoint",
              "timeout", "upstream_model", "max_waiting", "substitute", "match", "advertise", "cloud", "color", "routed"}
 # routed = no: a model llama-swap serves next to the tiers (the image judge) that is only ever asked
 # for by name (ultron/<name>). These keys would route requests to it, so they're refused there.
 ROUTING_ONLY_KEYS = ("substitute", "match", "advertise", "cloud")
+EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
 ROUTING_KEYS = {"default", "resident", "vision", "helper"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
@@ -68,6 +69,12 @@ class Tiers:
                     "vision": _bool(s.get("vision"), True),
                     "chat_only": _bool(s.get("chat_only"), False),
                     "think_in_content": _bool(s.get("think_in_content"), False),
+                    "reasoning_content": _bool(s.get("reasoning_content"), False),
+                    "reasoning_effort": _bool(s.get("reasoning_effort"), False),
+                    "effort": _bool(s.get("effort"), False),
+                    "effort_cap": (s.get("effort_cap") or "").strip().lower(),
+                    "max_output_tokens": int(s.get("max_output_tokens") or 0),
+                    "check_endpoint": (s.get("check_endpoint") or "/health").strip(),
                     "timeout": int(s.get("timeout") or 0),
                     "upstream_model": (s.get("upstream_model") or "").strip(),
                     "max_waiting": int(s.get("max_waiting") or 20),
@@ -107,6 +114,9 @@ class Tiers:
                 for k in ROUTING_ONLY_KEYS:
                     if t[k]:
                         self.problems.append(f"[{n}] {k}: not allowed with routed = no")
+        for n, t in self.tier.items():
+            if t["effort_cap"] and t["effort_cap"] not in EFFORT_LEVELS:
+                self.problems.append(f"[{n}] effort_cap = {t['effort_cap']}: one of {', '.join(EFFORT_LEVELS)}")
         for atom in re.findall(r"[A-Za-z0-9._/-]+", self.resident):
             if atom not in known:
                 self.problems.append(f"[routing] resident: {atom} is not a tier")
@@ -197,27 +207,12 @@ def _local_entry(model_name: str, t: dict[str, Any]) -> list[str]:
                 f"    stream_timeout: {t['timeout']}   # until the first streamed token (a cold long prefill sends nothing)"]
     out += ["  model_info:",
             f"    max_input_tokens: {t['context']}",
+            *([f"    max_output_tokens: {t['max_output_tokens']}"] if t["max_output_tokens"] else []),
             f"    description: {_q('local ' + t['name'] + ' ' + what + ' (llama-swap)')}"]
     return out
 
 
-def _bili(t: Tiers, cloud_base: str) -> list[str]:
-    """bili/config.json's network and providers keys. bili only needs each upstream model's context
-    window (LiteLLM's max_input_tokens, so it compresses before LiteLLM would refuse); it routes by the
-    upstream base in the request path. The judge never goes through bili. cloud_base: OMNIROUTE_BASE."""
-    routed = t.routed()
-    providers = {SWAP_API[:-len("/v1")]: {"models": {n: {"context": t.tier[n]["context"]} for n in routed}}}
-    clouds = {t.tier[n]["cloud"]: {"context": t.tier[n]["context"]} for n in routed if t.tier[n]["cloud"]}
-    base = re.sub(r"/v1$", "", cloud_base.strip().rstrip("/"))
-    if base and clouds:
-        providers[base] = {"models": clouds}
-    # never cut a request LiteLLM still waits for (cold long prefills take minutes)
-    wait_s = max([t.tier[n]["timeout"] for n in routed] + [1800])
-    return ['"network": ' + json.dumps({"upstreamTimeoutMs": wait_s * 1000}) + ",",
-            '"providers": ' + json.dumps(providers, indent=2) + ","]
-
-
-def blocks(t: Tiers, home: str = "__HOME__", cloud_base: str = "") -> dict[str, str]:
+def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
     """Generated config blocks, keyed by the placeholder that marks where each goes."""
     names = t.names
     lm: list[str] = ["# --- local tiers, advertised in /v1/models ---"]
@@ -246,11 +241,15 @@ def blocks(t: Tiers, home: str = "__HOME__", cloud_base: str = "") -> dict[str, 
                    "  model_info:",
                    f"    max_input_tokens: {t.tier[n]['context']}",
                    f"    description: {_q('cloud overflow for the ' + n + ' tier (' + c + ')')}"]
-    # No cloud -> local fallbacks: overflow is one-way (local -> cloud) and ultron_admit decides it. A
-    # cloud/<tier> -> ultron/<tier> fallback re-ran every failed cloud call on the local tier, ignoring
-    # route-mode cloud-only: with the endpoint failing (a LiteLLM started without OMNIROUTE_KEY), every
-    # cloud request was served locally.
-    fb = ["fallbacks: []   # cloud never falls back to local; see ultron_tiers.blocks()"]
+    # Local -> cloud only: a local request that still fails after LiteLLM's retries (mostly mtplx 507
+    # "insufficient memory" mid-prefill) is answered by cloud/<tier> in the same request. ultron_admit sets
+    # disable_fallbacks for x-route: private / local-only. Never cloud -> local: overflow is one-way and
+    # ultron_admit decides it; a cloud/<tier> -> ultron/<tier> fallback re-ran every failed cloud call
+    # locally, ignoring route-mode cloud-only.
+    fb = ["fallbacks:   # local -> cloud after the retries; never the other way (see ultron_tiers.blocks())"]
+    fb += [f"  - {{{_q('ultron/' + n)}: [{_q('cloud/' + n)}]}}" for n in clouds] if clouds else []
+    if not clouds:
+        fb = ["fallbacks: []   # no tier has a cloud overflow"]
     alias = ["model_group_alias:   # bare tier names keep working, not listed in /v1/models"]
     alias += [f"  {n}: {{model: \"ultron/{n}\", hidden: true}}" for n in names]
     slow = [n for n in names if t.tier[n]["timeout"]]
@@ -265,7 +264,7 @@ def blocks(t: Tiers, home: str = "__HOME__", cloud_base: str = "") -> dict[str, 
         sw += [f"  {n}:",
                f"    cmd: {home}/.mtplx/bin/{x['script']} ${{PORT}}",
                f"    env: [\"TIER={n}\"]",
-               "    checkEndpoint: /health",
+               f"    checkEndpoint: {x['check_endpoint']}",
                f"    ttl: {x['ttl']}" + ("   # never unload" if x["ttl"] == 0 else "")]
         if x["upstream_model"]:
             um = x["upstream_model"]
@@ -281,5 +280,4 @@ def blocks(t: Tiers, home: str = "__HOME__", cloud_base: str = "") -> dict[str, 
     return {"__TIERS_MODEL_LIST__": "\n".join(lm), "__TIERS_FALLBACKS__": "\n".join(fb),
             "__TIERS_ALIASES__": "\n".join(alias), "__TIERS_RETRY_POLICY__": "\n".join(retry),
             "__TIERS_SWAP_MODELS__": "\n".join(sw),
-            "__TIERS_SWAP_HOOKS__": "\n".join(hooks), "__TIERS_SWAP_ROUTING__": "\n".join(routing),
-            "__TIERS_BILI__": "\n".join(_bili(t, cloud_base))}
+            "__TIERS_SWAP_HOOKS__": "\n".join(hooks), "__TIERS_SWAP_ROUTING__": "\n".join(routing)}

@@ -1,18 +1,18 @@
 # LiteLLM hooks
 
-Five hooks that run inside LiteLLM, so they apply to every client behind `:4000` (Claude
+Seven hooks (two optional) that run inside LiteLLM, so they apply to every client behind `:4000` (Claude
 Code, pi, Hermes, opencode, Unreal Engine MCP harnesses, plain OpenAI SDK scripts) on both
 `/v1/chat/completions` and `/v1/messages`, with no client changes.
 
 ```
-client ──► LiteLLM :4000 ──[ultron_stats → loop_breaker → ultron_media → ultron_admit]──► llama-swap :8001 ──► tiers
+client ──► LiteLLM :4000 ──[ultron_stats → loop_breaker → ultron_media → ultron_admit → ultron_hindsight → ultron_headroom]──► llama-swap :8001 ──► tiers
                                                                                      └──► cloud/<tier> (OmniRoute)
 client ◄── [ultron_rescue] ◄── reply
 ```
 
 They are registered in `config.yaml` under `litellm_settings.callbacks`. The order matters: stats
 first so its clock starts on arrival, the loop breaker edits the request, admission picks the
-target last. `ultron_rescue` works on the reply instead, on its way back to the client. Everything deployed from here is Python 3.9 standard library only.
+target next, and the two optional hooks (memory, compression) edit the messages after that. `ultron_rescue` works on the reply instead, on its way back to the client. Everything deployed from here is Python 3.9 standard library only.
 
 | Hook | What it does | Mode switch | Log |
 |---|---|---|---|
@@ -20,12 +20,14 @@ target last. `ultron_rescue` works on the reply instead, on its way back to the 
 | `loop_breaker.py` | stops agents repeating the same tool call | `~/.ultron/loop-breaker-mode` | `~/.litellm/loop-breaker.jsonl` |
 | [`ultron_media.py`](../Vision/media/) | answers "make an image / video", web search, audio via OmniRoute; lives in `Vision/media/`, deployed here | `~/.ultron/media-mode` | `~/.litellm/media.jsonl` |
 | `ultron_admit.py` | local tier vs cloud overflow per conversation, then pins it | `~/.ultron/admit-mode`, `~/.ultron/route-mode` | `~/.litellm/ultron-admit.jsonl` |
+| `ultron_hindsight.py` | optional: recalls notes from a Hindsight memory server into the conversation, retains new turns | `~/.ultron/hindsight-mode` (`on`/`off`, default off) | `~/.litellm/hindsight.jsonl` |
+| `ultron_headroom.py` | optional: compresses the messages of every chat request in-process | `~/.ultron/headroom-mode` (`on`/`off`, default off) | `~/.litellm/headroom.jsonl` |
 | `ultron_rescue.py` | turns a ```bash block a local tier wrote instead of a tool call into a tool call | `~/.ultron/rescue-mode` | `~/.litellm/rescue.jsonl` |
 
 Mode files hold one word (`enforce`, `shadow` or `off`) and are re-read on every request, so a flip
 from the Wanda panel applies to the next request with no restart. When a file is missing the hook
 falls back to its env var in `~/.litellm/env` (`LOOP_BREAKER_MODE`, `ULTRON_MEDIA_MODE`,
-`ULTRON_ADMIT_MODE`, `ULTRON_RESCUE_MODE`).
+`ULTRON_ADMIT_MODE`, `ULTRON_RESCUE_MODE`). The two optional hooks take only `on`/`off`.
 
 ## loop_breaker.py — stop repeated tool calls
 
@@ -96,7 +98,7 @@ after a re-pin prefills the whole conversation (no prefix cache yet).
 (tiers.conf, default 20; haiku 50 in the example) before it overflows, and a request that would make
 llama-swap unload a busy tier waits up to `OVERFLOW_WAIT_S` (300 s) before that one request goes to
 the cloud. Overflow is one-way: there are no `cloud/<tier>` → `ultron/<tier>` fallbacks in
-`config.yaml`. Those re-ran every failed cloud call on the local tier, ignoring route mode
+`config.yaml` (local → cloud ones exist, see below). Those re-ran every failed cloud call on the local tier, ignoring route mode
 `cloud-only` (with the cloud endpoint failing on a missing key, every cloud request was served
 locally).
 
@@ -171,6 +173,48 @@ backend shows the request. Same-tier requests don't wait (the tier queues them i
 0 = off) it goes anyway. The tiers share one GPU, so taking turns costs little throughput. Logged as
 `mem_wait: {s, gave_up_on}`; the `x-ultron-route` header gets `mem-wait=Ns`.
 
+### Refusals, cache sheds and backlogs
+
+Local tiers can fail in ways the memory guard doesn't see. Each case sends that tier's new requests to the
+cloud for a while (when cloud is allowed) and logs a row in `ultron-admit.jsonl`:
+
+- **Refusal.** mtplx answers 507 when a request doesn't fit in memory. The request goes to the cloud, the
+  conversation's pin stays, it is held on cloud for `ULTRON_REFUSED_HOLD_S` (300 s) and the memory guard
+  trips for `MEM_HOLD_S` (`overflow=refused`, log event `refused`).
+- **Cache shed.** When the server's admission control drops a session's cache (an aborted prefill, or a
+  restore that lost `ULTRON_SHED_LOST_TOKENS`, default 8192, or restored nothing of a 32k+ prompt), new
+  requests for that tier go to the cloud for `ULTRON_SHED_HOLD_S` (`opus=60,sonnet=30,haiku=30`; `sonnet=0`
+  turns it off for a tier).
+- **Disk-save backlog.** While a tier has more than `ULTRON_BACKLOG_GB` (2; 0 = off) of session saves
+  pending, it takes no new conversations; they go to the cloud until it is under half of that.
+- **Fallback after retries.** `router_settings.fallbacks` send `ultron/<tier>` to `cloud/<tier>` after
+  LiteLLM's retries fail, never for `x-route: private` or route mode `local-only`. `x-ultron-route` gets
+  `; fallback=cloud/<tier>` and the conversation stays on cloud for `ULTRON_REFUSED_HOLD_S`.
+
+### Tier lock
+
+For a Mac where two heavy tiers can't share memory, `~/.ultron/tier-lock` (`fable` or `opus`; missing = off)
+makes the locked tier serve both `claude-fable*` and `claude-opus*` requests. While `~/.ultron/tier-lock-swap`
+exists (a swap is in progress), those requests go to `cloud/<their own tier>` as soft pins and move back
+once the locked tier is up. Both files are written by hand or by your own tooling; Wanda has no switch for them.
+
+### Reasoning effort and token caps
+
+A request's `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`) is handled per tier by
+its `tiers.conf` flags: `effort = yes` tiers map it to a per-request thinking budget (1 / 512 / 2048 / 8192 /
+16384 / 32768 tokens) through `mtplx/bin/mtplx_effort.py` in the tier script; `reasoning_effort = yes` tiers
+(Splash) read it themselves; either way `x-ultron-route` ends in `; effort=<level>/<budget>`.
+`effort_cap` lowers a higher ask to the tier's ceiling (sonnet: `high`). `max_output_tokens` is the part of
+the window kept for thinking and the answer. A request that sets no sampling fields gets the tier's defaults
+(fable: temperature 0.6, `max_tokens` 32768, `repetition_penalty` 1.1).
+
+### Empty tool calls
+
+Some servers emit tool calls with `arguments: "{}"`. The client rejects them, and a history holding many of
+those pairs makes the model imitate them. Before each local request, assistant tool calls with no arguments
+are dropped together with their results, but only when the request's `tools` declare that tool with required
+arguments or properties (zero-argument tools stay). With no `tools` in the request every empty call goes.
+
 ### Helper models: routed = no (the image judge)
 
 A `tiers.conf` section with `routed = no` is a model llama-swap serves next to the tiers but that is
@@ -210,7 +254,7 @@ runs when the module loads and sends `/v1/messages` for deployments on the cloud
 as Claude Code does). The generated `cloud/*` entries carry `cache_control_injection_points` on the
 system prompt instead, so clients that don't mark (pi, Hermes) still cache it at a Claude model
 behind the cloud endpoint. Local tiers need nothing: LiteLLM strips `cache_control` for
-`hosted_vllm`, and mtplx and TensorFold cache by prompt prefix.
+`hosted_vllm`, and mtplx and Splash cache by prompt prefix.
 
 ### One-shot requests skip the mtplx session bank
 
@@ -264,42 +308,26 @@ tool-carrying request of each local-tier conversation, as the tier sees it, to
 history). It's the training data for [`lora/`](../lora/README.md). Traces hold tool output (file
 contents, command output): treat them like the conversations themselves. `ULTRON_TRACE_DIR` moves them.
 
-### Compression (bili, off by default)
+### Compression (Headroom, off by default)
 
-[billion-context](https://github.com/ranxianglei/billion-context) (`bili`, npm, MIT) can compress every
-chat request LiteLLM sends upstream, from one install behind LiteLLM: client → LiteLLM `:4000` (auth,
-hooks, admission, overflow) → bili `127.0.0.1:8787` → llama-swap or the cloud endpoint. Clients change
-nothing.
+`ultron_headroom` compresses `messages` on every chat request, local tiers and `cloud/*` alike, with
+[headroom-ai](https://github.com/headroomlabs-ai/headroom) running in-process (no proxy, no extra port).
 
-- **Install:** `npm i -g --prefix ~/.billion-context billion-context`, then
-  `launchctl kickstart gui/$(id -u)/com.billion-context.bili`. The `-g` matters: without it the binary
-  lands in `node_modules/.bin/`, not at `~/.billion-context/bin/bili` where `start.sh` looks (or set
-  `BILI_BIN` in `~/.bili/env`). Without the binary the LaunchAgent logs a hint to `~/.bili/bili.log`
-  and exits; launchd doesn't retry it.
-- **Switch:** `~/.ultron/bili-mode` = `on` | `off` (Wanda: Controls & routing → Compression; missing =
-  off), re-read every request. The deployment hook's last step, after the history fixes, points each
-  chat request for a routed tier (and its aliases) or a `cloud/<tier>` overflow at
-  `http://127.0.0.1:8787/bili/openai/<upstream base>`. `routed = no` models (the judge), `media/*` and
-  embeddings go direct, and so does everything while bili's LaunchAgent has no PID (checked with
-  `launchctl` every 5 s, since bili logs every connection). `x-ultron-route` ends in `; bili`.
-- **Sessions:** the hook sends the conversation key admission pins on as `x-acp-session`, so bili keeps
-  one session per conversation across tiers and restarts.
-- **How it compresses:** bili tags every message and adds a `compress` tool plus ~4k tokens of
-  instructions to each request (prefix-cached after the first turn). Past ~50k compressible tokens it
-  nudges the model to call it; the model writes the summary and bili sends it in place of that range on
-  every later request. Until then nothing is saved. Requests with `max_tokens` ≤ 200 pass untouched.
-  A small model can call `compress` on a tiny prompt; bili then returns `[Compression FAILED: …]` as
-  the reply.
-- **Config:** `bili/config.json`, filled in by `deploy.py`: loopback bind, no self-update, each routed
-  tier's `context` from `tiers.conf` as its window (bili compresses at 75% of it), each tier's `cloud`
-  id at `OMNIROUTE_BASE`, and an upstream timeout no shorter than the longest tier `timeout`.
-- **Exposure:** bili's `/bili/` proxy has **no authentication** and forwards to whatever URL is in its
-  path, so it stays on loopback. Caddy exposes only the UI at `/__bili/`, read-only (GET/HEAD).
-- **Clients:** remove any client-side billion-context plugin (pi, opencode, …) or requests are
-  compressed twice.
-- **Speed:** on the reference Mac, sonnet decoded 138.8 tok/s through bili vs 139.7 direct.
-- **Rollback:** `echo off > ~/.ultron/bili-mode` (next request goes direct, no restart);
-  `launchctl bootout gui/$(id -u)/com.billion-context.bili` stops bili entirely.
+- **Install:** `pip install headroom-ai` into LiteLLM's Python environment, then restart LiteLLM.
+- **Switch:** `~/.ultron/headroom-mode` = `on` | `off` (Wanda: Controls & routing → Headroom; missing =
+  off), re-read every request. A request opts out with the header `x-headroom: off`.
+- **Local only:** the hook clears `HEADROOM_API_KEY` after init, so prompts never go to Headroom Cloud, and
+  telemetry is off. `ULTRON_HEADROOM_MODEL_LIMIT` is the largest tier input cap.
+- **Cost:** a tool result that changes between turns is re-prefilled in a local tier's prefix cache.
+- **Visibility:** `~/.litellm/headroom.jsonl` (tokens before/after, ms), Wanda's Headroom tab and savings
+  tiles; `x-ultron-route` ends in `; headroom(-N)`.
+
+### Memory (Hindsight, off by default)
+
+`ultron_hindsight` recalls notes from a [Hindsight](https://github.com/vectorize-io/hindsight) memory server
+into each conversation and retains new turns. Set `ULTRON_HINDSIGHT_URL` (empty = the hook does nothing) and
+`ULTRON_HINDSIGHT_BANK` in `~/.litellm/env`, then switch `~/.ultron/hindsight-mode` to `on` (Wanda: Memory).
+Notes ride on user messages, which Headroom leaves alone. Log: `~/.litellm/hindsight.jsonl` (Wanda's Memory tab).
 
 ### Agent-round history
 
@@ -312,13 +340,14 @@ assistant turn's `<think>` only after the last real user message, and two things
   reminders. Each became the "last user message", so the model never saw its own reasoning from
   earlier tool rounds of the same task, whatever the tool. Now interior system/developer messages,
   and reminder-only user turns that follow a tool result, are appended to that tool result (or the
-  user message they follow). Leading system/developer messages merge into one (TensorFold and
-  llama-server answer 500 otherwise).
+  user message they follow). Leading system/developer messages merge into one (llama-server and
+  some other servers answer 500 otherwise).
 - **Thinking dropped.** LiteLLM's `hosted_vllm` provider pops `reasoning_content`/`thinking_blocks`
   from assistant turns. For tiers with `think_in_content = yes` in `tiers.conf` (Qwen3.5, whose
   template reads `<think>…</think>` back out of assistant content) the reasoning goes in as a
   leading `<think>` block. A Qwen3.8 template reads only `reasoning_content`, so those tiers don't
-  get their thinking back yet.
+  get their thinking back by default: tiers with `reasoning_content = yes` (Qwen3.8) keep it in the message's
+  `reasoning_content` and the `<think>` block is taken out of the content so it isn't rendered twice.
 
 Measured on a 41-message agent replay: 13 of 13 assistant turns keep their thinking (+595 prompt
 tokens), and at the point where the agent was stuck it repeated a failed command 3/5 times instead

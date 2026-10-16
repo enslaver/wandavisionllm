@@ -100,7 +100,9 @@ MODES = [
     {"key": "route", "label": "Route", "path": ULTRON_DIR / "route-mode", "env": None, "default": "auto",
      "options": ["auto", "local-only", "cloud-only"],
      "help": "auto: local tiers first, overflow to OmniRoute combos · local-only: never cloud · "
-             "cloud-only: every new conversation to the combos (applies even while admission is in shadow)"},
+             "cloud-only: every request to the combos, conversations already pinned local too (their pin stays, "
+             "so they come back on auto), which lets a tier unload · x-route: private stays local · "
+             "applies even while admission is in shadow"},
     {"key": "admit", "label": "Admission", "path": ULTRON_DIR / "admit-mode", "env": "ULTRON_ADMIT_MODE", "default": "shadow",
      "options": ["shadow", "enforce", "off"],
      "help": "enforce: rewrite each new conversation to its local tier / substitute / cloud combo and pin it · "
@@ -118,11 +120,16 @@ MODES = [
      "options": ["shadow", "enforce", "off"],
      "help": "enforce: a local tier's reply that ends with the ```bash block it meant to run becomes a real tool call · "
              "shadow: log only"},
-    {"key": "bili", "label": "Compression", "path": ULTRON_DIR / "bili-mode", "env": None, "default": "off",
+    {"key": "headroom", "label": "Headroom", "path": ULTRON_DIR / "headroom-mode", "env": None, "default": "off",
      "options": ["off", "on"], "warn": [],   # optional add-on: off is the normal state, not a warning
-     "help": "on: chat requests to the tiers and cloud overflow go through billion-context (bili, 127.0.0.1:8787, "
-             "UI at /__bili/), which adds a compress tool and folds long conversations into the model's own "
-             "summaries · off: straight to the tier / cloud endpoint · bili not installed or down: direct either way"},
+     "help": "on: every chat request, local tier or cloud/*, has older tool output and history compressed in "
+             "LiteLLM (headroom-ai, in-process, no token floor) before it goes out; local tiers re-prefill a "
+             "changed older turn · off: nothing is compressed · per request: header x-headroom: off · "
+             "savings tiles below, per request in the HEADROOM log tab"},
+    {"key": "hindsight", "label": "Memory", "path": ULTRON_DIR / "hindsight-mode", "env": None, "default": "off",
+     "options": ["off", "on"], "warn": [],
+     "help": "on: a Hindsight memory server (HINDSIGHT_BASE in ~/.litellm/env) recalls facts for each new human "
+             "turn and stores each finished turn; not for tool-less side calls · off: none"},
     # Shown in the LoRA section ("panel"). on/off are both normal states, so neither is painted as a warning.
     {"key": "trace", "label": "Trace tap", "path": ULTRON_DIR / "trace-mode", "env": None, "default": "off",
      "options": ["off", "on"], "warn": [], "panel": "lora",
@@ -146,6 +153,8 @@ LOGS = {
     "admit": ("ADMIT", HOME / ".litellm/ultron-admit.jsonl"),  # local vs OmniRoute routing decisions
     "media": ("MEDIA", HOME / ".litellm/media.jsonl"),  # ultron_media: prompts sent to OmniRoute (or would be, in shadow)
     "rescue": ("RESCUE", HOME / ".litellm/rescue.jsonl"),  # ultron_rescue: text replies turned into tool calls
+    "hindsight": ("MEMORY", HOME / ".litellm/hindsight.jsonl"),  # ultron_hindsight: recalls, notes applied, turns stored
+    "headroom": ("HEADROOM", HOME / ".litellm/headroom.jsonl"),  # ultron_headroom: tokens before/after per compressed request
     "stats": ("REQUESTS", HOME / ".litellm/ultron-stats.jsonl"),  # every request through LiteLLM (ultron_stats)
 }
 SECRET_RE = re.compile(r"(sk-[A-Za-z0-9_-]{4})[A-Za-z0-9_-]+|((?:Bearer|api[_-]?key[=:]\s*)\s*)[A-Za-z0-9._-]{8,}", re.I)
@@ -329,6 +338,73 @@ def request_row(r):
 _plain_ids = {}   # port -> (model id, server name) from /v1/models
 
 
+def llm_flight(tier):
+    """State and in-flight fields for a backend without an mtplx snapshot, from LiteLLM's in-flight list
+    (ultron_stats)."""
+    live = [r for r in llm_live() if r.get("endpoint") == f"ultron/{tier}" and r.get("phase") != "ending"]
+    gen = next((r for r in live if r.get("phase") == "generating"), None)
+    out = {"state": GENERATING if gen else PREFILL if live else IDLE}
+    if live:
+        f = gen or live[0]
+        out["live"] = {"n": len(live), "age": f.get("age"), "prompt": f.get("prompt_est"),
+                       "gen": f.get("gen_est"), "tok_s": f.get("tok_s")}
+    return out
+
+
+_splash_seen = {}   # tier -> (submitted count, time it last changed or had work): Splash has no last-access time
+
+
+def splash_slim(st, tier, now=None):
+    """Splash's GET /status in the shape slim() gives an mtplx snapshot, so the tier card renders it. Splash reports
+    engine-wide aggregates, not per-request rows: the card's 'last request' numbers are the engine's own."""
+    now = now or time.time()
+    req, met, cache = st.get("requests") or {}, st.get("metrics") or {}, st.get("cache") or {}
+    plan = (st.get("memory_plan") or {}).get("model", {}).get("memory") or {}
+    budget = (st.get("memory_plan") or {}).get("budget") or {}
+    kv, act = st.get("kv") or {}, st.get("memory_actual") or {}
+    inflight = []
+    for f in st.get("active_requests") or []:
+        decoding = f.get("phase") == "decode"
+        inflight.append({
+            "age_s": (f.get("age_ms") or 0) / 1000, "prompt_tokens": f.get("prompt_tokens"), "preview": "",
+            "gen_tokens": f.get("generated_tokens") if decoding else None, "decode_tok_s": None,
+            "prefill": None if decoding else {"done": f.get("prompt_processed"), "total": f.get("prompt_tokens"),
+                                              "tok_s": None, "phase": f.get("phase")},
+        })
+    if not inflight:   # this build's /status has no active_requests list: the scheduler's counters say what is running
+        sch = st.get("scheduler") or {}
+        for _ in range(int(sch.get("decoding") or 0)):
+            inflight.append({"age_s": None, "prompt_tokens": None, "preview": "", "gen_tokens": 1, "decode_tok_s": None, "prefill": None})
+        for _ in range(int(sch.get("prefilling") or 0) + int(sch.get("queued") or 0)):
+            inflight.append({"age_s": None, "prompt_tokens": None, "preview": "", "gen_tokens": None, "decode_tok_s": None,
+                             "prefill": {"done": None, "total": None, "tok_s": met.get("prefill_tokens_per_second"), "phase": "prefill"}})
+    submitted = req.get("submitted") or 0
+    seen = _splash_seen.get(tier)
+    if inflight or not seen or seen[0] != submitted:
+        _splash_seen[tier] = seen = (submitted, now)
+    itl = (met.get("itl_ms") or {}).get("p50")
+    ttft = (met.get("ttft_ms") or {}).get("p50")
+    return {
+        "uptime_s": None, "ctx": st.get("maximum_context_tokens"), "profile": "Splash", "sampler": None,
+        "active": max(0, submitted - (req.get("completed") or 0) - (req.get("cancelled") or 0) - (req.get("failed") or 0)),
+        "inflight": inflight, "last_activity": seen[1],
+        "lifetime": {"requests_total": submitted, "cancelled_total": req.get("cancelled"),
+                     "prompt_tokens_total": met.get("prefill_input_tokens"),
+                     "completion_tokens_total": met.get("decode_output_tokens"),
+                     "cached_tokens_total": cache.get("reused_tokens")},
+        "rolling": {"count": (met.get("ttft_ms") or {}).get("samples"),
+                    "mean": round(1000 / itl) if itl else None, "p95": None, "max": None, "sticky_all_time_max": None},
+        "latest": {"t": None, "prompt": 100, "cached": round(100 * (cache.get("hit_rate") or 0)), "cache_src": "hit rate",
+                   "gen": None, "decode": met.get("decode_tokens_per_second"), "prefill": met.get("prefill_tokens_per_second"),
+                   "e2e": None, "ttft": ttft / 1000 if ttft else None, "elapsed": None, "depth": "",
+                   "accept": met.get("draft_acceptance_rate"), "tools": None, "client": None},
+        "mem": {"footprint": act.get("current_bytes"), "weights": (plan.get("target_weights_bytes") or 0) + (plan.get("draft_weights_bytes") or 0) or None,
+                "active": act.get("allocated_bytes"), "peak": act.get("peak_bytes")},
+        "bank": {"entries": kv.get("pages_cache"), "bytes": kv.get("allocated_bytes"), "max": budget.get("dynamic_budget_bytes")},
+        "prefill_peak": None, "machine": None, "sys_available": None, "pressure": None,
+    }
+
+
 def plain_backend(tier, port, err):
     """Tier fields for a server without /v1/mtplx/snapshot (TensorFold): up/down from its /health, model id
     from /v1/models, and what it's doing from LiteLLM's in-flight list (ultron_stats)."""
@@ -345,16 +421,10 @@ def plain_backend(tier, port, err):
         except Exception:
             _plain_ids[port] = (None, None)
     mid, owner = _plain_ids[port]
-    live = [r for r in llm_live() if r.get("endpoint") == f"ultron/{tier}" and r.get("phase") != "ending"]
-    gen = next((r for r in live if r.get("phase") == "generating"), None)
-    out = {"state": GENERATING if gen else PREFILL if live else IDLE, "backend": owner or "no mtplx snapshot",
-           "note": f"{owner or 'this server'} has no mtplx snapshot · per-request stats under Models"}
+    out = dict(llm_flight(tier), backend=owner or "no mtplx snapshot",
+               note=f"{owner or 'this server'} has no mtplx snapshot · per-request stats under Models")
     if mid:
         out["model"] = mid
-    if live:
-        f = gen or live[0]
-        out["live"] = {"n": len(live), "age": f.get("age"), "prompt": f.get("prompt_est"),
-                       "gen": f.get("gen_est"), "tok_s": f.get("tok_s")}
     return out
 
 
@@ -404,7 +474,11 @@ class Collector:
                     d["state"], d["note"] = LOADING, r["state"]
                 else:
                     try:
-                        s = slim(get(f"http://127.0.0.1:{d['port']}/v1/mtplx/snapshot", 2.5))
+                        try:
+                            s = slim(get(f"http://127.0.0.1:{d['port']}/v1/mtplx/snapshot", 2.5))
+                        except Exception:   # Splash has /status instead of the mtplx snapshot
+                            s = splash_slim(get(f"http://127.0.0.1:{d['port']}/status", 2.5), t, ts)
+                            d["backend"] = "Splash"
                         d["snap"] = s
                         if s["inflight"]:
                             f = s["inflight"][0]
@@ -638,6 +712,7 @@ ADMIT_ROWS = JsonlWindow(ADMIT_LOG)
 LOOP_ROWS = JsonlWindow(LOOPS_LOG)
 MEDIA_ROWS = JsonlWindow(LOGS["media"][1])
 RESCUE_ROWS = JsonlWindow(LOGS["rescue"][1])
+HEADROOM_ROWS = JsonlWindow(LOGS["headroom"][1])
 
 
 def _short_key(k):
@@ -646,6 +721,21 @@ def _short_key(k):
         agent = "main" if parts[2] == "main" else "sub " + parts[2][:6]
         return f"cc {parts[1][:8]} {agent}"
     return (parts[0] + " " + parts[1][:8]) if len(parts) > 1 else k
+
+
+def cloud_reason(r):
+    """Why an admission row went to cloud: this request's overflow (mem, refused, shed, backlog, route-mode,
+    evict-busy; the pin stays local), else the rule that made its cloud pin."""
+    if r.get("overflow"):
+        return str(r["overflow"])
+    rule = str(r.get("rule") or "")
+    if "route-mode" in rule:
+        return "route-mode"
+    if "x-route" in rule:
+        return "x-route"
+    if m := re.search(r"overflow:([\w-]+)", rule):
+        return m.group(1) + " (pin)"
+    return rule.split("(")[0].replace("pinned:", "") or "?"
 
 
 def routing_stats():
@@ -663,6 +753,12 @@ def routing_stats():
                 "applied": sum(1 for r in rows if r.get("applied"))}
 
     new_h1 = [r for r in h1 if r.get("new")]
+    why = {}
+    for r in h1:
+        if str(r["target"]).startswith("cloud/"):
+            k = cloud_reason(r)
+            why[k] = why.get(k, 0) + 1
+    fallbacks = sum(1 for r in ADMIT_ROWS.rows if r.get("event") == "fallback" and r.get("ts", 0) >= now - 3600)
     rules = {}
     for r in new_h1:
         k = str(r["rule"]).split("(")[0]
@@ -697,9 +793,9 @@ def routing_stats():
                      "who": _short_key(r.get("key"))} for r in loops[::-1] if r.get("level")][:10]
 
     return {"modes": [mode_state(m) for m in MODES], "h1": split(h1), "d1": split(admits),
-            "new_h1": len(new_h1), "rules_h1": rules, "errors_24h": errors_24h, "recent": recent,
+            "new_h1": len(new_h1), "rules_h1": rules, "cloud_why_h1": why, "fallbacks_h1": fallbacks, "errors_24h": errors_24h, "recent": recent,
             "pins": pins, "loops_24h": levels, "recent_loops": recent_loops,
-            "media": media_stats(), "rescue": rescue_stats()}
+            "media": media_stats(), "rescue": rescue_stats(), "headroom": headroom_stats()}
 
 
 def media_stats():
@@ -729,6 +825,44 @@ def media_stats():
             "video_done": sum(1 for r in events if r["event"] == "video_done"),
             "video_failed": sum(1 for r in events if r["event"] == "video_failed"),
             "recent": recent}
+
+
+def headroom_stats():
+    """ultron_headroom over 1 h and 24 h: tokens before/after compression, savings, time cost, per model.
+    The hook can run twice for one /v1/messages call (same call_id): count it once, from the widest before to
+    the smallest after."""
+    now = time.time()
+    rows = list(HEADROOM_ROWS.refresh())
+    errors = [r for r in rows if r.get("error")]
+    calls = {}
+    for r in rows:
+        if r.get("error") or r.get("before") is None or r.get("after") is None:
+            continue
+        c = calls.setdefault(r.get("call_id") or f"row{r['ts']}", {"ts": r["ts"], "model": r.get("model"),
+                                                                  "before": 0, "after": None, "ms": 0})
+        c["before"] = max(c["before"], r["before"])
+        c["after"] = r["after"] if c["after"] is None else min(c["after"], r["after"])
+        c["ms"] += r.get("ms") or 0
+
+    def window(since):
+        cs = [c for c in calls.values() if c["ts"] >= since]
+        before, after = sum(c["before"] for c in cs), sum(c["after"] for c in cs)
+        by_model = {}
+        for c in cs:
+            m = by_model.setdefault(str(c["model"] or "?"), {"n": 0, "before": 0, "after": 0})
+            m["n"] += 1
+            m["before"] += c["before"]
+            m["after"] += c["after"]
+        return {"requests": len(cs), "applied": sum(1 for c in cs if c["after"] < c["before"]),
+                "before": before, "after": after, "saved": before - after,
+                "pct": round(100 * (before - after) / before, 1) if before else 0,
+                "avg_ms": round(sum(c["ms"] for c in cs) / len(cs)) if cs else 0,
+                "best": max((c["before"] - c["after"] for c in cs), default=0), "by_model": by_model}
+
+    recent = [{"t": c["ts"], "model": c["model"], "before": c["before"], "after": c["after"], "ms": c["ms"]}
+              for c in sorted(calls.values(), key=lambda c: c["ts"], reverse=True)[:10]]
+    return {"h1": window(now - 3600), "d1": window(now - 86400), "errors_24h": len(errors),
+            "last_error": (errors[-1].get("error") or "")[:200] if errors else "", "recent": recent}
 
 
 def rescue_stats():
@@ -1018,7 +1152,7 @@ def services_status():
         if s.get("disabled"):
             row["state"] = "disabled"
         elif s.get("launchd"):
-            # Up = the LaunchAgent has a live PID. For services that log every connection (bili),
+            # Up = the LaunchAgent has a live PID. For services that log every connection,
             # where an HTTP probe every 10 s would flood their log.
             row["state"] = "up" if re.search(r'"PID" = \d+;', sh("launchctl", "list", s["launchd"])) else "down"
         elif s.get("upstream"):
@@ -1207,7 +1341,7 @@ def tail_log(name, lines=300):
             fh.seek(max(0, fh.tell() - 256 * 1024))
             text = fh.read().decode("utf-8", "replace")
     text = "\n".join(text.splitlines()[-lines:])
-    if name in ("admit", "loops", "stats", "media", "rescue"):
+    if name in ("admit", "loops", "stats", "media", "rescue", "headroom"):
         text = "\n".join(pretty_jsonl(name, l) for l in text.splitlines())
     return SECRET_RE.sub(lambda m: (m.group(1) or m.group(2) or "") + "****", text)
 
@@ -1235,11 +1369,19 @@ def pretty_jsonl(name, line):
         return (f"{t}  {g('kind'):7} {g('mode'):7} {'agent' if r.get('agent') else 'chat ':5} {state:22} {g('ms'):>5}ms "
                 f"{_short_key(r.get('key')) or '-':22} {g('model_used') or g('model'):30} {g('file')}  | {g('text')[:100]}"
                 f"{'  ERR ' + g('error')[:200] if r.get('error') else ''}")
+    if name == "headroom" and "error" not in r:
+        b, a = r.get("before"), r.get("after")
+        pct = f"{100 * (b - a) / b:5.1f}%" if b else "    -"
+        return (f"{t}  {g('model'):16} {g('before'):>7} -> {g('after'):>7} tokens  saved {g('saved'):>6} ({pct})  "
+                f"{g('ms'):>4}ms  {'applied' if r.get('applied') else 'unchanged'}  {g('call_id')[:8]}")
     if name == "rescue":
         return (f"{t}  {'applied' if r.get('applied') else g('mode'):8} {g('model'):14} {_short_key(r.get('key')) or '-':22} "
                 f"{g('tool'):8} {g('input')[:140]}{'  ERR ' + g('error')[:200] if r.get('error') else ''}")
     if "error" in r:
         return f"{t}  ERROR  {r['error']}"
+    if name == "admit" and r.get("event") == "refused":  # mtplx 507: that conversation goes to cloud for hold_s
+        return (f"{t}  REFUSED {g('model'):13} {_short_key(r.get('key')):22} -> cloud {g('hold_s')}s"
+                f"  | {g('detail')[:160]}")
     if name == "admit":
         state = "applied" if r.get("applied") else "shadow"
         load = " ".join(f"{k}:{v.get('state','?')[:5]}/{v.get('active',0)}+{v.get('waiting',0)}" for k, v in (r.get("loaded") or {}).items())

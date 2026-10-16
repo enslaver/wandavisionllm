@@ -1,6 +1,6 @@
 # Tier script examples
 
-The four tier scripts in `mtplx/bin/` start mtplx (opus, sonnet, haiku) and TensorFold (fable). These start
+The four tier scripts in `mtplx/bin/` start mtplx (opus, sonnet, haiku) and Splash (fable). These start
 the same kind of tier on another runtime. They are not deployed; copy one over a tier script to use it.
 
 | Script | Runtime | Example model | Vision |

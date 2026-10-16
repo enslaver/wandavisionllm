@@ -8,6 +8,8 @@ import pytest
 
 import ultron_media as um
 
+REAL_GEN = um.gen_image
+
 REAL_CONFIRM = um.helper_confirm  # the sandbox fixture stubs um.helper_confirm
 
 
@@ -378,3 +380,45 @@ def test_video_tries_each_model_then_writes_the_error(sandbox, tmp_path, monkeyp
     err = (tmp_path / "media" / "job1.error.txt").read_text()
     assert all(m in err for m in tried)
     assert '"video_failed"' in (tmp_path / "media.jsonl").read_text()
+
+
+def with_comfy(monkeypatch):
+    monkeypatch.setattr(um, "conf", lambda: {**um.DEFAULTS, "comfy": "http://gpu-box.example.ts.net:8188"})
+
+
+def test_gen_image_prefers_comfy(sandbox, monkeypatch):
+    with_comfy(monkeypatch)
+    monkeypatch.setattr(um, "gen_image", REAL_GEN)
+    monkeypatch.setattr(um, "_comfy_image", lambda p: b"\x89PNG\r\n\x1a\nxx")
+    monkeypatch.setattr(um, "_post", lambda *a, **k: pytest.fail("cloud endpoint called"))
+    name, model = um.gen_image("a fox")
+    assert model.startswith("comfyui/") and name.endswith(".png")
+
+
+def test_gen_image_overflows_to_cloud(sandbox, monkeypatch):
+    with_comfy(monkeypatch)
+    monkeypatch.setattr(um, "gen_image", REAL_GEN)
+
+    def down(p):
+        raise RuntimeError("gpu box off")
+    monkeypatch.setattr(um, "_comfy_image", down)
+    monkeypatch.setattr(um, "_post", lambda *a, **k: {"data": [{"b64_json": base64.b64encode(b"\x89PNG\r\n\x1a\nxx").decode()}]})
+    name, model = um.gen_image("a fox")
+    assert not model.startswith("comfyui/")
+
+
+def test_edit_overflows_to_cloud(sandbox, monkeypatch):
+    with_comfy(monkeypatch)
+
+    def down(*a):
+        raise RuntimeError("gpu box off")
+    monkeypatch.setattr(um, "_comfy_edit", down)
+    monkeypatch.setattr(um, "_post", lambda *a, **k: {"data": [{"b64_json": base64.b64encode(b"\x89PNG\r\n\x1a\nxx").decode()}]})
+    name, model = um.edit_image("make it red", (b"\x89PNG\r\n\x1a\nxx", "image/png"))
+    assert not model.startswith("comfyui/")
+
+
+def test_comfy_disabled_raises(monkeypatch):
+    monkeypatch.setattr(um, "conf", lambda: {**um.DEFAULTS, "comfy": ""})
+    with pytest.raises(RuntimeError):
+        um._comfy_image("x")

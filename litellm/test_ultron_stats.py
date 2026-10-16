@@ -10,6 +10,8 @@ CONFIG = """
 model_list:
   - model_name: "ultron/opus"
     litellm_params: {model: "openai/opus", api_base: "http://127.0.0.1:8001/v1"}
+  - model_name: "ultron/judge"
+    litellm_params: {model: "hosted_vllm/judge", api_base: "http://127.0.0.1:8001/v1"}
   - model_name: "claude-opus-*"
     litellm_params: {model: "openai/opus", api_base: "http://127.0.0.1:8001/v1"}
   - model_name: "claude-*"
@@ -189,3 +191,29 @@ def test_stream_success_log_finishes_without_stream_end(tmp_path, monkeypatch):
     t.start({"litellm_call_id": "s", "model": "opus", "stream": True}, "acompletion", now=1.0)
     t.logged({"litellm_call_id": "s", "standard_logging_object": {"completion_tokens": 5}}, None, True, now=2.0)
     assert live(tmp_path) == [] and rows(tmp_path)[0]["status"] == "ok"
+
+
+def test_judge_decide_pass_through_is_listed_in_flight_as_the_judge(tmp_path, monkeypatch):
+    s = us.UltronStats.__new__(us.UltronStats)
+    s.t = tracker(tmp_path, monkeypatch)
+    body = {"kind": "choice", "question": "which?", "options": ["a", "b"], "litellm_logging_obj": NS(litellm_call_id="j1")}
+    out = asyncio.run(s.async_pre_call_hook(None, None, body, "pass_through_endpoint"))
+    assert out is body and "model" not in body and "litellm_call_id" not in body   # forwarded unchanged
+    (r,) = json.loads((tmp_path / "live.json").read_text())["inflight"]
+    assert r["cid"] == "j1" and r["endpoint"] == "ultron/judge" and r["call_type"] == "pass_through_endpoint"
+    asyncio.run(s.async_pre_call_hook(None, None, {"litellm_logging_obj": NS(litellm_call_id="x")}, "pass_through_endpoint"))
+    assert len(s.t.reqs) == 1   # other pass-throughs aren't tracked
+    s.t.logged({"litellm_call_id": "j1", "standard_logging_object": {}}, None, True, now=12.0)
+    assert rows(tmp_path)[0]["endpoint"] == "ultron/judge" and rows(tmp_path)[0]["status"] == "ok"
+
+
+def test_decisions_pass_through_is_logged_as_cloud_decisions(tmp_path, monkeypatch):
+    s = us.UltronStats.__new__(us.UltronStats)
+    s.t = tracker(tmp_path, monkeypatch)
+    body = {"state": "s", "questions": {"q": {"type": "noul", "instructions": "ok?"}}, "litellm_logging_obj": NS(litellm_call_id="d1")}
+    out = asyncio.run(s.async_pre_call_hook(None, None, body, "pass_through_endpoint"))
+    assert out is body and "model" not in body and "litellm_call_id" not in body
+    (r,) = json.loads((tmp_path / "live.json").read_text())["inflight"]
+    assert r["cid"] == "d1" and r["endpoint"] == "cloud/decisions"
+    s.t.logged({"litellm_call_id": "d1", "standard_logging_object": {}}, None, True, now=12.0)
+    assert rows(tmp_path)[0]["endpoint"] == "cloud/decisions" and rows(tmp_path)[0]["status"] == "ok"

@@ -20,15 +20,23 @@ TIER=${TIER:-opus}  # llama-swap sets TIER from tiers.conf
 MODEL="Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed"   # mtplx resolves Hugging Face ids from ~/.mtplx/models
 
 # Session-bank RAM cap. Each mtplx process otherwise plans for most of the Mac's memory, and the tiers would swap.
-export MTPLX_SESSION_BANK_MAX_BYTES=6G
-export MTPLX_SESSION_BANK_IDLE_TTL_S=300   # drop idle warm sessions after 5 min (the SSD tier keeps them)
-export MTPLX_LOOP_GUARD=1                  # in-reply repetition steering
+export MTPLX_SESSION_BANK_MAX_BYTES=4G   # was 6G: the three banks together (opus + sonnet + haiku) were more than a 64 GB Mac has beside the weights, other software and mtplx's ~6 GB shed floor; opus entries stay under ~2.6 GB, and evicted sessions come back from the SSD tier in under a second
+export MTPLX_SESSION_BANK_IDLE_TTL_S=3600   # mtplx's default; 300 made a conversation that spent a few minutes on the cloud overflow come back to an expired session and prefill cold. The cap above still bounds the bank
+# In-reply loop guard OFF. It is DRY-style steering: once a 12-token run repeats 4 times, the token continuing
+# any earlier 12+ token verbatim run loses 3-16 raw logits. Opus writes long structured plans (YAML keys, ids
+# repeated verbatim), so the guard fired on ~18% of requests and corrupted output: mid-token newlines ("prom\npt"),
+# dropped characters ("153-" for "1453-"). Runaway replies still reached max_tokens with it on. Sonnet and haiku
+# keep it (it fired on <0.3% of their requests).
+export MTPLX_LOOP_GUARD=0
 
-exec "$HOME/.mtplx/bin/mtplx" serve \
+# mtplx_effort.py = mtplx plus per-request reasoning_effort -> thinking budget (tiers.conf: effort = yes); same CLI.
+# Roll back: exec "$HOME/.mtplx/bin/mtplx" serve ... (same flags)
+export PYTHONPYCACHEPREFIX="$HOME/Library/Caches/MTPLX/PythonBytecode"   # as ~/.mtplx/bin/mtplx sets it
+exec "$HOME/Library/Application Support/MTPLX/runtime-venv/bin/python" "$HOME/.mtplx/bin/mtplx_effort.py" serve \
   --host 127.0.0.1 --port "$PORT" \
   --no-auth `# loopback only, behind llama-swap; the network-facing auth is LiteLLM's master key` \
   --model "$MODEL" --model-id "$TIER" \
-  --profile sustained `# the pack's recommended profile; MTP depth comes from its mtplx_runtime.json` \
+  --profile sustained `# the pack's recommended profile; MTP depth comes from its mtplx_runtime.json. A/B on the reference Mac: mtplx's turbo profile (4-bit verify matmuls, validated but not bit-exact) was no consistent win over sustained, so stay on sustained` \
   --tool-prompt-mode native `# the model's own trained tool format (qwen3_coder XML)` \
   --reasoning auto --preserve-thinking auto `# thinking on; the Qwen3.6 template keeps it across turns` \
   --default-temperature 0.6 --default-top-p 0.95 --default-top-k 20 \

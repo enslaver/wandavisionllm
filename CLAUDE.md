@@ -9,9 +9,8 @@ truth: change a file here, then `./deploy.py push` copies it into place on the M
 component's reload step. Nothing is edited on the Mac directly.
 
 ```
-LiteLLM 0.0.0.0:4000 (hooks: ultron_stats, loop_breaker, ultron_media, ultron_admit, ultron_rescue, prometheus)
-  -> [bili 127.0.0.1:8787, optional billion-context compression, when ~/.ultron/bili-mode = on]
-  -> llama-swap 127.0.0.1:8001 -> tiers from litellm/tiers.conf (example: fable on TensorFold; opus, sonnet, haiku on mtplx;
+LiteLLM 0.0.0.0:4000 (hooks: ultron_stats, loop_breaker, ultron_media, ultron_admit, ultron_rescue, optional ultron_hindsight + ultron_headroom, prometheus)
+  -> llama-swap 127.0.0.1:8001 -> tiers from litellm/tiers.conf (example: fable on Splash; opus, sonnet, haiku on mtplx;
      judge, routed = no, on mlx_vlm.server) on 127.0.0.1:18001+
   -> cloud/* overflow: OmniRoute (optional; local -> cloud only, never back)
 Wanda 127.0.0.1:8790 behind Caddy :443/:80 — the dashboard
@@ -27,11 +26,10 @@ Wanda 127.0.0.1:8790 behind Caddy :443/:80 — the dashboard
 | `litellm/` | `~/.litellm/` | config, `start.sh`, the hooks; tests and tools (`test_*.py`, `conftest.py`, `suite.py`, `replay.py`, `fake_omniroute.py`, `env.example`) are NOT deployed |
 | `Vision/` | `~/.litellm/ultron_media.py` | `media/ultron_media.py` deploys with the `litellm` component (a `(repo path, name)` pair in `COMPONENTS`); `comfyui/` goes to the GPU box via `gpu-box/deploy.py`; tests, `judge/`, `open-webui/` are NOT deployed |
 | `llama-swap/` | `~/.llama-swap/config.yaml` | reloads itself (`-watch-config`) |
-| `mtplx/bin/` | `~/.mtplx/bin/tier-*.sh` | applies next time that tier loads |
+| `mtplx/bin/` | `~/.mtplx/bin/` (`tier-*.sh`, `mtplx_effort.py`) | applies next time that tier loads |
 | `wanda/` | `~/wanda/` | whole folder minus README and `services.example.json`; `install.sh` restarts it |
 | `caddy/` | `/opt/homebrew/etc/Caddyfile` | validated, then reloaded |
-| `launchd/` | `~/Library/LaunchAgents/` | LiteLLM, llama-swap and bili agents |
-| `bili/` | `~/.bili/` | optional billion-context `start.sh` + `config.json` (providers from `tiers.conf`); restarted when LiteLLM is idle |
+| `launchd/` | `~/Library/LaunchAgents/` | LiteLLM and llama-swap agents |
 | `bin/` | `~/bin/` | `backup-stack.sh` |
 | `gpu-box/` | — | NOT deployed from here: `gpu-box/deploy.py` runs on the optional Windows GPU box (ComfyUI, Caddy, Unsloth) |
 | `lora/` | — | NOT deployed: optional LoRA fine-tuning scripts (mlx-lm on the Mac; Unsloth on the GPU box for haiku images); artifacts in `~/lora/` |
@@ -67,7 +65,7 @@ After swapping models or changing routing/vision settings, run the live suite.
 
 `wanda/server.py` samples the stack every second and serves `/`, `/api/*`, `/icons/*`;
 `wanda/static/index.html` is the whole page (no build, no external assets). API: `GET /api/status`,
-`/api/stream` (SSE), `/api/history`, `/api/log?name=swap|litellm|caddy|modes|omniroute|loops|admit|media|rescue|stats`; `POST /api/mode`, `/api/flag`, `/api/tier`
+`/api/stream` (SSE), `/api/history`, `/api/log?name=swap|litellm|caddy|modes|omniroute|loops|admit|media|rescue|stats|hindsight|headroom`; `POST /api/mode`, `/api/flag`, `/api/tier`
 (POSTs need `X-Wanda-Token`). Add a live switch in `MODES`, an on/off flag in `FLAGS`.
 
 ## Docs

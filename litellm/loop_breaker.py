@@ -44,7 +44,9 @@ THRESHOLDS = {  # run length at which each level starts: (warn, force, stop)
     "error": (3, 4, 6),
     "cycle": (5, 6, 8),  # full repetitions of a 2-4 step cycle
     "poll_cycle": (10, 16, 20),  # cycle containing a poll/wait step (hourly check + wakeup)
+    "recur": (8, 12, 16),  # same call seen this many times in RECUR_WINDOW steps with other calls between; results may differ (ps output)
 }
+RECUR_WINDOW = 48
 MAX_STEPS = 256  # trailing tool steps inspected; enough for the stop threshold of any rule
 
 # Tools/args that legitimately repeat while waiting on something (status polls, PIE input,
@@ -323,6 +325,15 @@ def detect(steps: list[Step]) -> Verdict:
         if LEVELS.index(lvl) > LEVELS.index(best.level):
             calls = list(dict.fromkeys((n, a) for s in tail[-period:] for _, n, a in s.calls))
             best = Verdict(lvl, f"{rule}{period}", reps, [n for s in tail[-period:] for n in s.names], calls=calls)
+
+    # Rotation: the same call + same result keeps coming back among other calls (fable re-running
+    # the same four diagnostics for 100 turns). Not a strict cycle, so the rules above miss it.
+    if not last.is_poll():
+        sigs = keys[-RECUR_WINDOW:]
+        n = sigs.count(sigs[-1])
+        lvl = _level(n, "recur")
+        if n > 1 and LEVELS.index(lvl) > LEVELS.index(best.level):
+            best = Verdict(lvl, "recur", n, last.names, calls=[(nm, a) for _, nm, a in last.calls])
 
     if best.level != "none":
         text = next(iter(last.results.values()))[0]

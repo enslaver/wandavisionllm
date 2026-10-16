@@ -36,6 +36,11 @@ Template: [`litellm/env.example`](../litellm/env.example).
 | `ULTRON_PRESSURE_TRIP` | kernel pressure level that trips the memory guard: 4 = critical (default), 2 = warn |
 | `ULTRON_CHAT_BRIDGE` | `on` (default): `/v1/messages` to the cloud endpoint go through LiteLLM's chat-completions bridge; `off`: LiteLLM's `/v1/responses` bridge |
 | `ULTRON_MEM_WAIT_S` | memory gate: how long a local-only request waits for other tiers to finish (300; 0 = off) |
+| `ULTRON_HINDSIGHT_URL`, `ULTRON_HINDSIGHT_BANK` | Hindsight memory server and bank (empty URL = the hook does nothing) |
+| `ULTRON_HEADROOM_MODEL_LIMIT` | largest tier input cap, for Headroom compression (200000) |
+| `ULTRON_COMFY_URL`, `ULTRON_COMFY_WORKFLOWS` | media hook tries this ComfyUI first for image generation/edit (empty = off); workflow folder (`~/.ultron/comfy`) |
+| `ULTRON_DECISIONS_MODEL`, `DECISIONS_API_KEY` | model filled in for a Decisions API pass-through body that names none (empty), and its key |
+| `ULTRON_REFUSED_HOLD_S`, `ULTRON_SHED_LOST_TOKENS`, `ULTRON_BACKLOG_GB` | admission sends a tier to cloud for this long after the server refused for memory (300), after a cache shed lost this many tokens (8192), or while disk saves are backed up past this many GB (2; 0 = off) |
 
 ## Live switches
 
@@ -47,7 +52,8 @@ Template: [`litellm/env.example`](../litellm/env.example).
 | `~/.ultron/media-mode` | `enforce`, `shadow`, `off` | `shadow` | media prompts go to OmniRoute or only log |
 | `~/.ultron/rescue-mode` | `enforce`, `shadow`, `off` | `enforce` | a tool call written as a ```bash block becomes a real tool call, or only logs |
 | `~/.ultron/trace-mode` | `on`, `off` | `off` | save each local-tier agent conversation's latest request to `~/.ultron/traces/` (for `lora/`) |
-| `~/.ultron/bili-mode` | `on`, `off` | `off` | send chat requests for the tiers and `cloud/*` through billion-context compression (needs bili installed; direct while it isn't running) |
+| `~/.ultron/headroom-mode` | `on`, `off` | `off` | compress every chat request in-process with Headroom (needs `pip install headroom-ai` in LiteLLM's environment) |
+| `~/.ultron/hindsight-mode` | `on`, `off` | `off` | recall and retain notes in a Hindsight memory server (`ULTRON_HINDSIGHT_URL`) |
 
 Wanda's Controls & routing section has a switch for each; the trace tap's is in its LoRA section.
 
@@ -90,7 +96,8 @@ Tier names never change, so clients and LiteLLM don't either.
    `chat_only` to what the new model and runtime support (the script's header lists them).
 3. If memory changes, recheck `resident` in `tiers.conf` and the cache caps in the script.
 4. `./deploy.py push`, then unload the tier from Wanda so the next request loads the new model.
-5. `cd litellm && uvx --with pyyaml python3 suite.py` to validate routing and vision.
+5. A tier's other keys (`effort`, `reasoning_effort`, `reasoning_content`, `effort_cap`, `max_output_tokens`, `check_endpoint`) are documented in the `tiers.conf` header.
+6. `cd litellm && uvx --with pyyaml python3 suite.py` to validate routing and vision.
 
 ## Adding a tier or a hook
 

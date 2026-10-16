@@ -6,4 +6,6 @@ set -a; source "$HOME/.litellm/env"; set +a
 case "${LITELLM_MASTER_KEY:-}" in
   ""|sk-change-me) echo "start.sh: set LITELLM_MASTER_KEY in ~/.litellm/env; refusing to start without auth" >&2; exit 1 ;;
 esac
+# ultron_headroom.py runs headroom-ai in-process (optional): no telemetry beacon, no update check
+export HEADROOM_BEACON=off DO_NOT_TRACK=1 HEADROOM_UPDATE_CHECK=off
 exec "$HOME/.local/bin/litellm" --config "$HOME/.litellm/config.yaml" --host 0.0.0.0 --port "${LITELLM_PORT:-4000}"
