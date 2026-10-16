@@ -838,6 +838,13 @@ def test_take_session_lets_only_one_of_two_racing_requests_claim_it(monkeypatch)
     assert wins == [False, False, False]  # "a" is still in flight: nobody else may use the session
 
 
+def test_take_session_counts_a_fresh_claim_before_the_stats_file_lists_it(monkeypatch):
+    hook = ua.Admission()
+    monkeypatch.setattr(ua, "litellm_inflight", lambda: {})
+    assert hook.take_session("s", "b") and not hook.take_session("s", "c")  # b claimed it a moment ago
+    assert hook.take_session("s", "b")  # the owner itself may reuse it
+
+
 def test_unavailable_cloud_never_becomes_the_target(monkeypatch):
     monkeypatch.setenv("OMNIROUTE_BASE", "")
     assert not ua.cloud_for("sonnet")
@@ -1404,6 +1411,7 @@ def test_mtplx_tiers_get_a_named_session_per_conversation(monkeypatch):
     assert headers("c2") == {"x-mtplx-request-id": "c2"} and hook.admission.recent["c2"] == "pinned; sess=anon(busy)"
     assert headers("c3")["x-mtplx-session-id"] == "h-ffff0000-sonnet"  # another conversation is unaffected
     inflight["sonnet"] = []
+    hook.admission._session_claimed.clear()  # ...and its claim is older than the grace window
     assert headers("c2")["x-mtplx-session-id"] == "h-8b07a98c-sonnet"  # c1 done: the next turn takes it
     assert "x-mtplx-session-id" not in headers("c4", msgs=turn[:1], tools=None)  # one-shot: bank bypass, no session
     assert "x-mtplx-session-id" in headers("c5", model="hosted_vllm/opus")  # no admission key: hashed fallback

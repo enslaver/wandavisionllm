@@ -359,8 +359,8 @@ def note_text(v: Verdict) -> str:
         listed = "".join(f"\n- {_call_label(n, a)}" for n, a in v.calls[:4])
         return (
             f"{NOTE_PREFIX} {what.rstrip('.')}{':' + listed if listed else '.'}\n"
-            "Do not repeat these exact calls: they will return the same thing, and the next identical call "
-            "will end this turn. Keep working, but change course: make a different tool call (different "
+            f"Do not repeat these exact calls: {'they have not got you any further' if v.rule == 'recur' else 'they will return the same thing'}, "
+            "and the next identical call will end this turn. Keep working, but change course: make a different tool call (different "
             "arguments, a different command or tool, or a check of why this isn't working). Only if nothing "
             "else can work, tell the user what is blocking you."
         )
@@ -392,8 +392,9 @@ def _call_label(name: str, args: str, limit: int = 200) -> str:
 def stop_text(v: Verdict) -> str:
     tools = ", ".join(dict.fromkeys(v.tools))
     return (
-        f"{NOTE_PREFIX} Stopped this turn: the model called `{tools}` {v.run} times in a row with no change "
-        f"in the result, and did not change course after being told to. Last result: "
+        f"{NOTE_PREFIX} Stopped this turn: the model called `{tools}` {v.run} times "
+        f"{f'in its last {RECUR_WINDOW} calls' if v.rule == 'recur' else 'in a row with no change in the result'}, "
+        f"and did not change course after being told to. Last result: "
         f"\"{v.result_preview[:200]}\". Send a new instruction (or switch to a larger model tier) to continue."
     )
 
