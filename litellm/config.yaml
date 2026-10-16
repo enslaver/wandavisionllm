@@ -40,6 +40,8 @@ litellm_settings:
     - loop_breaker.proxy_handler_instance   # repeated tool calls -> note / tools off / stop
     - ultron_media.proxy_handler_instance   # media prompts -> cloud endpoint (~/.ultron/media-mode: shadow|enforce|off)
     - ultron_admit.proxy_handler_instance   # local tier vs cloud overflow, per-conversation pins
+    - ultron_hindsight.proxy_handler_instance  # optional memory notes (~/.ultron/hindsight-mode: on|off, default off); after admission, which keys on the client's own messages
+    - ultron_headroom.proxy_handler_instance   # optional context compression, in-process (~/.ultron/headroom-mode: on|off, default off; header x-headroom: off opts out); after admission and Hindsight
     - ultron_rescue.proxy_handler_instance  # local tier wrote a ```bash block instead of a tool call -> tool_use (~/.ultron/rescue-mode)
     - prometheus                            # stock /metrics; aggregates per model (auth: master key)
   drop_params: true
@@ -48,9 +50,21 @@ litellm_settings:
   # (Claude Code does). The generated cloud/* entries carry cache_control_injection_points instead, so
   # clients that don't mark (pi, Hermes) still cache the system prompt at a Claude upstream behind the
   # cloud endpoint. Local tiers need nothing: LiteLLM strips cache_control for hosted_vllm, and mtplx
-  # (session bank) and TensorFold cache by prompt prefix on their own.
+  # (session bank) and Splash cache by prompt prefix on their own.
   enable_anthropic_prompt_caching: true
   # No use_chat_completions_url_for_anthropic_messages: it moves /v1/messages off /v1/responses for every
   # openai/ deployment. ultron_admit.patch_omniroute_chat_bridge does that for the cloud endpoint only.
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # Optional: POST /decide/v1/systemone forwarded to a Decisions API behind the LiteLLM key.
+  # ultron_admit fills in "model" (ULTRON_DECISIONS_MODEL) when the body has none; ultron_stats logs
+  # it as cloud/decisions. Billed per call by that service. Uncomment and set DECISIONS_API_KEY in
+  # ~/.litellm/env to use it.
+  # pass_through_endpoints:
+  #   - path: "/decide/v1/systemone"
+  #     target: "https://decisions-api.dev/v1/systemone"
+  #     headers:
+  #       Authorization: "Bearer os.environ/DECISIONS_API_KEY"
+  #     auth: true
+  #     methods: ["POST"]
+  #     timeout: 300

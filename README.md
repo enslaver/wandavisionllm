@@ -15,14 +15,14 @@ and a realtime dashboard (Wanda) shows what every model is doing.
 any machine's Claude Code / pi / Hermes / opencode / OpenAI SDK
         │  Anthropic or OpenAI API, master key
         ▼
-LiteLLM 0.0.0.0:4000 ── hooks: stats → loop breaker → media → admission (→ rescue on the reply)
+LiteLLM 0.0.0.0:4000 ── hooks: stats → loop breaker → media → admission → memory, compression (optional) (→ rescue on the reply)
         │                                                   │
         ▼                                                   ▼
 llama-swap 127.0.0.1:8001                         cloud/<tier> (OmniRoute, optional)
-  ├─ fable   Qwen3.8-27B       TensorFold   200k ctx, thinking (takes turns with opus)
+  ├─ fable   Qwen3.8-27B       Splash       200k ctx, thinking (takes turns with opus)
   ├─ opus    Qwen3.6-35B-A3B   mtplx (MTP)  256k ctx, thinking, MoE
   ├─ sonnet  Qwen3.5-9B        mtplx (MTP)  262k ctx, vision, tools
-  └─ haiku   Qwen3.5-4B        mtplx (MTP)  always warm, helper (titles, media check)
+  └─ haiku   Qwen3.5-4B        mtplx (MTP)  always loaded, helper (titles, media check) (titles, media check)
 
 Wanda 127.0.0.1:8790 ── the dashboard, behind Caddy on :443 / :80
 ```
@@ -63,7 +63,7 @@ The long version, with the numbers: [docs/why.md](docs/why.md).
 Fable or opus (one at a time) sits in memory with sonnet and haiku (~32 + ~11 + ~8 GB with their
 caches) at moderate context. Fable still wants the machine to itself past ~128k tokens, where its KV
 cache grows to 47–52 GB.
-Measured fable speed (TensorFold, 4-bit, thinking off): ~150 tok/s on code, ~495 tok/s on file edits,
+Measured fable speed (TensorFold, before the move to Splash; 4-bit, thinking off): ~150 tok/s on code, ~495 tok/s on file edits,
 41 tok/s at 128k context. Haiku runs ~230 tok/s. Details, and how to size it for a smaller or larger
 Mac: [docs/hardware.md](docs/hardware.md).
 
@@ -71,13 +71,12 @@ Mac: [docs/hardware.md](docs/hardware.md).
 
 | Folder | Installs to | What |
 |---|---|---|
-| [`litellm/`](litellm/README.md) | `~/.litellm/` | LiteLLM config, launcher, `tiers.conf`, and the hooks: `loop_breaker`, `ultron_admit`, `ultron_stats`, `ultron_rescue` (plus `ultron_media` from `Vision/media/`) |
+| [`litellm/`](litellm/README.md) | `~/.litellm/` | LiteLLM config, launcher, `tiers.conf`, and the hooks: `loop_breaker`, `ultron_admit`, `ultron_stats`, `ultron_rescue`, optional `ultron_hindsight` and `ultron_headroom` (plus `ultron_media` from `Vision/media/`) |
 | `llama-swap/` | `~/.llama-swap/` | tier definitions, idle TTLs, the memory matrix |
 | `mtplx/bin/` | `~/.mtplx/bin/` | one launch script per tier; swap a model by editing one line |
 | [`wanda/`](wanda/README.md) | `~/wanda/` | the dashboard (stdlib Python + one HTML page) |
 | `caddy/` | `/opt/homebrew/etc/` | HTTPS front door: Wanda at `/`, LiteLLM at `/llm/`, media at `/media/` |
-| `launchd/` | `~/Library/LaunchAgents/` | keeps LiteLLM, llama-swap and (if installed) bili running |
-| `bili/` | `~/.bili/` | optional: [billion-context](https://github.com/ranxianglei/billion-context) compression behind LiteLLM, off until you switch it on ([litellm/README.md](litellm/README.md#compression-bili-off-by-default)) |
+| `launchd/` | `~/Library/LaunchAgents/` | keeps LiteLLM and llama-swap running |
 | `bin/` | `~/bin/` | `backup-stack.sh` |
 | [`Vision/`](Vision/README.md) | `~/.litellm/` (the media hook) | images and video: the media hook, an image judge (`ultron/judge`) and its ranking tool, ComfyUI workflows, Open WebUI tools |
 | [`gpu-box/`](gpu-box/README.md) | a Windows PC with an NVIDIA GPU (optional) | sets up ComfyUI and Unsloth there: `python gpu-box\deploy.py` |
@@ -130,7 +129,7 @@ export ANTHROPIC_AUTH_TOKEN=<LITELLM_MASTER_KEY>
 claude          # /model opus | sonnet | haiku
 ```
 
-The full walkthrough — installing LiteLLM, llama-swap, mtplx, TensorFold and Caddy, getting the
+The full walkthrough — installing LiteLLM, llama-swap, mtplx, Splash and Caddy, getting the
 models, and running without a cloud provider — is in [docs/install.md](docs/install.md).
 
 ## Day to day

@@ -46,7 +46,7 @@ ls ~/.cache/huggingface/hub 2>/dev/null | sed -n 's/^models--//p' | sed 's/--/\/
 uv tool list --show-with > "$M/uv-tools.txt" 2>/dev/null
 uv pip freeze -p ~/.local/share/uv/tools/litellm/bin/python > "$M/litellm-pip-freeze.txt" 2>/dev/null
 brew list --versions > "$M/brew.txt" 2>/dev/null
-{ ~/.mtplx/bin/mtplx --version; ~/.local/bin/llama-swap --version; ~/.tensorfold/venv/bin/tensorfold --version; caddy version; sw_vers; } > "$M/versions.txt" 2>&1
+{ ~/.mtplx/bin/mtplx --version; ~/.local/bin/llama-swap --version; ~/.tensorfold/venv/bin/tensorfold --version; "$(command -v splash || echo splash)" --version; caddy version; sw_vers; } > "$M/versions.txt" 2>&1
 launchctl list | grep -iE "litellm|llama|wanda|caddy|mtplx" > "$M/launchctl-running.txt"
 echo "ok   manifests"
 

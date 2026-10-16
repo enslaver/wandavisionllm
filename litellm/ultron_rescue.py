@@ -399,6 +399,8 @@ class UltronRescue(CustomLogger):  # type: ignore[misc,valid-type]
                 call = rewrite_response(response, data.get("tools"), mode == "enforce")
                 if call is not None:
                     _log(data, call, mode, mode == "enforce", False)
+                    if mode == "enforce":
+                        data["ultron_rescued"] = True  # ultron_admit's response-headers hook: x-ultron-injected: rescue
         except Exception:
             pass
         return response

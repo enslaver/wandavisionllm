@@ -16,18 +16,21 @@
 # Sampling = Qwen3.5 model card "thinking, precise coding": temp 0.6 top_p 0.95 top_k 20 presence 0.0.
 # Other official presets (clients can send them per request):
 #   thinking general 1.0/0.95/20 presence 1.5 · non-thinking 0.7/0.8/20 presence 1.5 (+ enable_thinking=false)
-# A presence penalty of 0.5-1.5 helps if the small model starts repeating itself.
+# A presence penalty of 0.5-1.5 helps if the small model starts repeating itself (it costs speed, see below).
 PORT=${1:?usage: tier-haiku.sh <port> [extra mtplx serve flags]}; shift
 EXTRA=("$@")         # benchmarking / one-off overrides; llama-swap passes none
 TIER=${TIER:-haiku}  # llama-swap sets TIER from tiers.conf
 MODEL="Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed"   # mtplx resolves Hugging Face ids from ~/.mtplx/models
 
 # Session-bank RAM cap. Each mtplx process otherwise plans for most of the Mac's memory, and three tiers would swap.
-export MTPLX_SESSION_BANK_MAX_BYTES=5G     # a long agent session (~90k tokens) needs ~3.6 GB
+export MTPLX_SESSION_BANK_MAX_BYTES=3G     # was 5G (an ~88k-token session entry is 3.6 GB); most requests bypass the bank and the multi-turn entries stay under ~2.5 GB (see tier-opus.sh)
 export MTPLX_SESSION_BANK_IDLE_TTL_S=300   # drop idle warm sessions after 5 min (no SSD tier: see --ssd-session-cache)
 export MTPLX_LOOP_GUARD=1                  # in-reply repetition steering
 
-exec "$HOME/.mtplx/bin/mtplx" serve \
+# mtplx_effort.py = mtplx plus per-request reasoning_effort -> thinking budget (tiers.conf: effort = yes); same CLI.
+# Roll back: exec "$HOME/.mtplx/bin/mtplx" serve ... (same flags)
+export PYTHONPYCACHEPREFIX="$HOME/Library/Caches/MTPLX/PythonBytecode"   # as ~/.mtplx/bin/mtplx sets it
+exec "$HOME/Library/Application Support/MTPLX/runtime-venv/bin/python" "$HOME/.mtplx/bin/mtplx_effort.py" serve \
   --host 127.0.0.1 --port "$PORT" \
   --no-auth `# loopback only, behind llama-swap; the network-facing auth is LiteLLM's master key` \
   --model "$MODEL" --model-id "$TIER" \
@@ -36,6 +39,6 @@ exec "$HOME/.mtplx/bin/mtplx" serve \
   --chat-template-profile tokenizer `# the bundled Qwen3.5 template` \
   --reasoning auto --preserve-thinking auto `# thinking on; history scoped to the active agent round` \
   --default-temperature 0.6 --default-top-p 0.95 --default-top-k 20 \
-  --default-presence-penalty 0.0 \
+  --default-presence-penalty 0.0 `# any penalty turns off mtplx's context-copy + greedy draft chain: an A/B of 0.0 vs 0.7 gave the same answers, 6-15% faster. Clients that want one send presence_penalty per request` \
   --ssd-session-cache off `# mtplx 2.12.0 queues each SSD save with its bank entry, unbounded (fixed in 2.12.1): haiku's one-shot requests leaked ~85 MB each past the 5G cap until Metal ran out` \
   --yes "${EXTRA[@]}"

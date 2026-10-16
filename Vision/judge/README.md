@@ -67,3 +67,21 @@ but before config.json gets its `quantization` block.
   that tier is quiet.
 - SkyJM-Gen is for text-to-image. Edit pairs (original + two edits) need SkyJM-Edit-4B and its
   `EDIT_TEMPLATE`, which aren't set up.
+
+## JEV-27B-VL decision server (optional, not part of the stack's tiers)
+
+JEV-27B-VL (autotrust, Apache-2.0) is a Qwen3.5-27B decision model with a `/v1/decide` API: calibrated
+probabilities over options, from text or up to 8 images. At 4-bit it is ~17 GB loaded, too big to sit beside
+a full tier set on a 64 GB Mac, so it is not a tier; run it on another Apple Silicon machine with mlx-vlm:
+
+- [`serve_decide_mlx.py`](serve_decide_mlx.py): the model card's vLLM `serve_decide.py` ported to mlx_vlm.
+  4-bit base + the bf16 decision LoRA beside each linear (on for System 1, off for System 2 thinking).
+  Same request/response (`jev27-bare-v1`). Tests: `cd Vision/judge && uvx pytest -q` (no MLX needed).
+- [`serve-judge.sh`](serve-judge.sh): `serve-judge.sh PORT` starts it (paths: mlx-vlm's pipx venv, `~/.judge`,
+  `~/models/LLM/JEV-27B-VL-mlx-4bit`).
+- Build the 4-bit model: `hf download autotrust/JEV-27B-VL` (~52 GB), `mlx_vlm.convert ... -q --q-bits 4`, then
+  copy `adapter_vllm/` and `calibration.json` in.
+- Measured: 4-bit vs 8-bit on 300 BoolQ + 300 CommonsenseQA items, 99.3% the same answers; warm text decisions
+  ~0.2 s, cold load 3-5 s. `score` is weak; use `noul` and `choice`. Ranking 3 images (one `choice`, two
+  orders) took 2 calls and ~10 s against SkyJM's 6 calls and 45 s.
+- `ultron_admit` / `ultron_stats` recognise a `/judge/v1/decide` pass-through (`decide_call_id`) if you route one.

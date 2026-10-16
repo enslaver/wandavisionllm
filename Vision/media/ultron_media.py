@@ -44,6 +44,7 @@ import ssl
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from typing import Any
@@ -75,6 +76,7 @@ DEFAULTS: dict[str, Any] = {
     "search_results": 5,
     "agents": True,  # act on tool-carrying requests (needs the helper tier's confirmation)
     "helper": "http://127.0.0.1:8001/v1",  # llama-swap: the helper tier answers the yes/no check
+    "comfy": os.environ.get("ULTRON_COMFY_URL", ""),   # local-first image gen/edit on the GPU box's ComfyUI; "" = OmniRoute only
 }
 TIMEOUT = {"image": 150, "edit": 240, "video": 420, "transcribe": 120, "search": 30, "confirm": 8}
 DEDUPE_S = 600
@@ -335,9 +337,77 @@ def _chat_image(model: str, prompt: str, image: tuple[bytes, str] | None, timeou
     raise RuntimeError("no image in chat reply: " + str(msg.get("content"))[:150])
 
 
+# The API-format graphs are Vision/comfyui/workflows/*.api.json; copy the two below into COMFY_WORKFLOWS.
+COMFY_WORKFLOWS = os.path.expanduser(os.environ.get("ULTRON_COMFY_WORKFLOWS", "~/.ultron/comfy"))
+COMFY_GEN = "zimage-turbo-generate.api.json"
+COMFY_EDIT = "flux2-klein-edit.api.json"
+
+
+def _comfy_http(url: str, data: bytes | None = None, ctype: str | None = None, timeout: float = 10) -> bytes:
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": ctype} if ctype else {})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _comfy_run(workflow: str, prompt: str, edit_input: str | None, timeout: float) -> bytes:
+    """Run a ComfyUI API workflow on the GPU box and return the first output image's bytes.
+    Raises when the box is down, busy for the whole timeout, or the graph fails."""
+    base = str(conf().get("comfy") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("comfy disabled")
+    _comfy_http(base + "/system_stats", timeout=2)   # fast fail when the box is off
+    with open(os.path.join(COMFY_WORKFLOWS, workflow)) as f:
+        g = json.load(f)
+    seed = int(time.time() * 1000) % (2 ** 31)
+    if edit_input is None:
+        g["27"]["inputs"]["text"] = prompt[:4000]
+        g["3"]["inputs"]["seed"] = seed
+    else:
+        g["74"]["inputs"]["text"] = prompt[:4000]
+        g["73"]["inputs"]["noise_seed"] = seed
+        g["76"]["inputs"]["image"] = edit_input
+    pid = json.loads(_comfy_http(base + "/prompt", json.dumps(
+        {"prompt": g, "client_id": uuid.uuid4().hex}).encode(), "application/json"))["prompt_id"]
+    end = time.time() + timeout
+    while time.time() < end:
+        h = json.loads(_comfy_http(base + "/history/" + pid)).get(pid)
+        if h:
+            st = h.get("status") or {}
+            if st.get("status_str") == "error":
+                raise RuntimeError("comfy graph failed")
+            for out in (h.get("outputs") or {}).values():
+                for im in out.get("images") or []:
+                    q = urllib.parse.urlencode({"filename": im["filename"], "subfolder": im.get("subfolder", ""),
+                                                "type": im.get("type", "output")})
+                    return _comfy_http(base + "/view?" + q, timeout=60)
+            if st.get("completed"):
+                raise RuntimeError("comfy produced no image")
+        time.sleep(1)
+    raise RuntimeError(f"comfy timed out after {int(timeout)}s")
+
+
+def _comfy_image(prompt: str) -> bytes:
+    return _comfy_run(COMFY_GEN, prompt, None, TIMEOUT["image"])
+
+
+def _comfy_edit(prompt: str, raw: bytes, ext: str, mime: str) -> bytes:
+    base = str(conf().get("comfy") or "").rstrip("/")
+    if not base:
+        raise RuntimeError("comfy disabled")
+    body, ct = _multipart({"overwrite": "true", "type": "input"},
+                          [("image", f"ultron-{uuid.uuid4().hex[:12]}.{ext}", mime, raw)])
+    name = json.loads(_comfy_http(base + "/upload/image", body, ct, timeout=30))["name"]
+    return _comfy_run(COMFY_EDIT, prompt, name, TIMEOUT["edit"])
+
+
 def gen_image(prompt: str) -> tuple[str, str]:
-    """(file name, model). Tries each configured model in order."""
+    """(file name, model). The GPU box's ComfyUI first (when configured), then each configured model in order."""
     errs = []
+    if conf().get("comfy"):
+        try:
+            return save(_comfy_image(prompt)), "comfyui/zimage-turbo"
+        except Exception as e:  # box off/busy/failed: overflow to the cloud endpoint
+            errs.append(f"comfyui: {e}")
     for model in conf()["image"]:
         try:
             if _via_chat(model):
@@ -355,6 +425,11 @@ def edit_image(prompt: str, image: tuple[bytes, str]) -> tuple[str, str]:
     raw, _declared = image
     ext, mime = sniff(raw)
     errs = []
+    if conf().get("comfy"):
+        try:
+            return save(_comfy_edit(prompt, raw, ext, mime)), "comfyui/flux2-klein"
+        except Exception as e:
+            errs.append(f"comfyui: {e}")
     for model in conf()["edit"]:
         try:
             if _via_chat(model):

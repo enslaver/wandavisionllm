@@ -245,3 +245,14 @@ def test_force_note_names_the_calls_and_never_asks_for_text():
     # long commands are cut, non-shell tools show their args
     assert lb._call_label("Bash", json.dumps({"command": "x" * 300})).endswith("...`")
     assert lb._call_label("Read", json.dumps({"file_path": "/a"})) == "Read `/a`"
+
+
+def test_rotation_of_repeated_diagnostics_is_caught():
+    cmds = [("Bash", {"command": c}, "nothing") for c in ("ps aux | grep Unreal", "lsof -i :8000", "find Plugins/Example")]
+    rot = []
+    for i in range(27):
+        rot += [cmds[i % 3], ("Read", {"file_path": f"/f{i}"}, f"content {i}")]
+    rot.append(cmds[0])
+    assert level(an(rot)) == "warn"  # first diagnostic back 10 times among changing reads
+    ok = [("Bash", {"command": f"ls {i}"}, f"out {i}") for i in range(30)]
+    assert level(an(ok)) == "none"  # distinct calls = progress

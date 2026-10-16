@@ -22,11 +22,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 | LiteLLM | `~/.local/bin/litellm` | `uv tool install 'litellm[proxy]==1.102.1' --with prometheus_client` |
 | llama-swap | `~/.local/bin/llama-swap` | download the macOS arm64 binary from [llama-swap releases](https://github.com/mostlygeek/llama-swap/releases) (v260 or newer: the config uses the `matrix` router and startup preload) |
 | mtplx | `~/.mtplx/bin/mtplx` | install the MTPLX app; it provides the CLI shim at that path (tested with 2.12.0; 2.12.1 fixes an SSD-cache leak the haiku script works around) |
-| TensorFold | `~/.tensorfold/venv/bin/tensorfold` | install [TensorFold](https://github.com/ashhart/TensorFold) into a venv at `~/.tensorfold/venv` (tested with 0.3.4.1) |
+| Splash | `splash` (Homebrew) | `brew install incoai/tap/splash` (tested with 1.3.2); the fable tier's runtime |
 | mlx-vlm (optional) | `~/.local/bin/mlx_vlm.server` | `uv tool install mlx-vlm==0.6.13`; only the image judge uses it |
 
 Only want mtplx? Delete the `[fable]` section from `litellm/tiers.conf` (and `fable |` from its
-`resident =` line); TensorFold only runs the fable tier, because it decodes the dense 27B about twice
+`resident =` line); Splash only runs the fable tier, because it decodes the dense 27B about twice
 as fast.
 
 ## 3. The models
@@ -36,7 +36,7 @@ gives a tier 300 s to become healthy, which isn't enough for a first download.
 
 | Tier | Model | Get it |
 |---|---|---|
-| fable | `Vontra/Qwen3.8-27B-MLX-4bit` + drafter `z-lab/Qwen3.8-27B-DFlash2` | `~/.tensorfold/venv/bin/tensorfold pull Vontra/Qwen3.8-27B-MLX-4bit z-lab/Qwen3.8-27B-DFlash2` (the script refuses to start without the drafter) |
+| fable | `mlx-community/Qwen3.8-27B-4bit` | `uvx --from huggingface_hub hf download mlx-community/Qwen3.8-27B-4bit` (Splash picks the draft model itself) |
 | opus | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `uvx --from huggingface_hub hf download Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed --local-dir ~/.mtplx/models/Youssofal--Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` |
 | sonnet | `Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed` | the same, with that id |
 | haiku | `Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed` | the same, with that id |
@@ -113,17 +113,15 @@ claude                                               # /model opus | sonnet | ha
 - **Validate:** `cd litellm && uvx --with pyyaml python3 suite.py` runs the live integration suite.
 - **Image and video generation on a GPU box, image ranking, Open WebUI:** see [Vision](../Vision/README.md).
 - **Image LoRAs for haiku** (trained with Unsloth on a CUDA PC): [lora/README.md](../lora/README.md).
-- **Context compression (bili):** `npm i -g --prefix ~/.billion-context billion-context` (the `-g`
-  puts the binary at `~/.billion-context/bin/bili`), then
-  `launchctl kickstart gui/$(id -u)/com.billion-context.bili` and switch Wanda's Compression to `on`.
-  See [litellm/README.md](../litellm/README.md#compression-bili-off-by-default).
+- **Context compression (Headroom):** `pip install headroom-ai` into LiteLLM's Python environment and switch
+  Wanda's Headroom to `on`. See [litellm/README.md](../litellm/README.md#compression-headroom-off-by-default).
 
 ## Uninstall
 
 ```bash
-for l in com.litellm.proxy com.llama-swap com.billion-context.bili com.wanda.portal; do
+for l in com.litellm.proxy com.llama-swap com.wanda.portal; do
   launchctl bootout gui/$(id -u)/$l; rm -f ~/Library/LaunchAgents/$l.plist
 done
 brew services stop caddy
-rm -rf ~/wanda ~/.wanda ~/.llama-swap ~/.ultron ~/.wandavision ~/.bili ~/.billion-context   # keeps ~/.litellm (your env) and the models
+rm -rf ~/wanda ~/.wanda ~/.llama-swap ~/.ultron ~/.wandavision   # keeps ~/.litellm (your env) and the models
 ```

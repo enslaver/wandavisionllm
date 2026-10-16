@@ -350,7 +350,7 @@ let TIERS = ["opus","sonnet","haiku"];   // replaced by the status feed's tier_c
 const TC = {opus:"#c39bd3", sonnet:"#88c0d0", haiku:"#a3be8c"};
 const S = {UNLOADED:0, LOADING:1, IDLE:2, PREFILL:3, GENERATING:4, UNREACHABLE:5};
 const WINDOW_S = 600;
-const LOG_TABS = [["swap","LLAMA-SWAP"],["litellm","LITELLM"],["caddy","CADDY"],["modes","MODES"],["omniroute","OMNIROUTE"],["loops","LOOPS"],["admit","ADMIT"],["media","MEDIA"],["rescue","RESCUE"],["stats","REQUESTS"]];
+const LOG_TABS = [["swap","LLAMA-SWAP"],["litellm","LITELLM"],["caddy","CADDY"],["modes","MODES"],["omniroute","OMNIROUTE"],["loops","LOOPS"],["admit","ADMIT"],["media","MEDIA"],["rescue","RESCUE"],["hindsight","MEMORY"],["headroom","HEADROOM"],["stats","REQUESTS"]];
 
 /* ---- helpers --------------------------------------------------------------------------- */
 const $ = id => document.getElementById(id);
@@ -930,6 +930,17 @@ function tile(k, v, d, split){
 }
 const tierOf = target => String(target||"").split("/")[1];
 const colorOf = target => String(target||"").startsWith("cloud/") ? CLOUD : (TC[tierOf(target)]||"#888");
+const WHY = {mem:"the Mac is near swapping (memory guard)", refused:"mtplx answered 507 insufficient memory", shed:"mtplx dropped a cached prefix",
+  backlog:"mtplx disk saves backed up", "route-mode":"route switch is cloud-only", "evict-busy":"would evict a busy tier",
+  "x-route":"client asked for cloud", explicit:"client asked for a cloud/* model", "mem (pin)":"conversation pinned to cloud by the memory guard when it started"};
+function whyTile(why, fb){
+  const n=Object.values(why).reduce((a,b)=>a+b,0);
+  const t=tile("Why cloud · last hour", `${f0(n)} <small>requests</small>${fb?` ${f0(fb)} <small>fallbacks</small>`:""}`,
+    (Object.entries(why).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`${k} ${v}`).join(" · ") || "nothing went to cloud")
+    + (fb?" · fallbacks: local errors LiteLLM's retries didn't fix":""));
+  t.title = Object.keys(why).map(k=>`${k}: ${WHY[k]||k}`).join("\n") + (fb?"\nfallback: a local error that LiteLLM's retries didn't fix":"");
+  return t;
+}
 function fmtTargets(by){ return Object.entries(by||{}).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`${t} ${n}`).join(" · ") || "none"; }
 let rKey="";
 function renderRouting(r){
@@ -939,10 +950,18 @@ function renderRouting(r){
     k.src.textContent = m.source==="panel" ? "live · ~/.ultron" : m.source==="env" ? "from ~/.litellm/env" : "default"; }
   if(r.error){ $("rstats").replaceChildren(el("div","quiet","routing stats unavailable — "+r.error)); return; }
   const md=r.media||{}, rs=r.rescue||{}, mv=k=>((r.modes||[]).find(m=>m.key===k)||{}).value||"?";
-  const key=JSON.stringify([r.h1,r.d1,r.pins,r.loops_24h,r.new_h1,r.errors_24h,(r.recent[0]||{}).t,(r.recent_loops[0]||{}).t,
-    md.hits,md.video_done,md.video_failed,((md.recent||[])[0]||{}).t,rs.total,mv("media"),mv("rescue")]);
+  const key=JSON.stringify([r.h1,r.d1,r.pins,r.loops_24h,r.new_h1,r.errors_24h,r.cloud_why_h1,r.fallbacks_h1,(r.recent[0]||{}).t,(r.recent_loops[0]||{}).t,
+    md.hits,md.video_done,md.video_failed,((md.recent||[])[0]||{}).t,rs.total,mv("media"),mv("rescue"),
+    r.headroom&&[r.headroom.h1,r.headroom.d1,r.headroom.errors_24h],mv("headroom")]);
   if(key===rKey) return; rKey=key;
-  const h=r.h1, d=r.d1, lp=r.loops_24h, pm=r.pins||{};
+  const h=r.h1, d=r.d1, lp=r.loops_24h, pm=r.pins||{}, hr=r.headroom||{};
+  const hrTile=(lab,w)=>{ w=w||{};
+    const pm_=Object.entries(w.by_model||{}).sort((a,b)=>b[1].before-a[1].before)
+      .map(([m,x])=>`${m} ${f0(x.before-x.after)} saved`).join(" · ");
+    return tile(`Headroom · ${lab} · ${mv("headroom")}`, `${f0(w.saved)} <small>tokens saved</small> ${w.pct||0}<small>%</small>`,
+      `${f0(w.before)} → ${f0(w.after)} tokens over ${f0(w.requests)} requests (${f0(w.applied)} shrunk) · avg ${f0(w.avg_ms)} ms · best ${f0(w.best)}`
+      + (pm_?" · "+pm_:"") + (lab==="24 h"&&hr.errors_24h?` · ${hr.errors_24h} errors${hr.last_error?" ("+hr.last_error+")":""}`:""),
+      [[w.after,"#88c0d0"],[w.saved,"#a3be8c"]]); };
   const pinTxt = b => fmtTargets(b);
   const mainN=Object.values(pm.main||{}).reduce((a,b)=>a+b,0), subN=Object.values(pm.sub||{}).reduce((a,b)=>a+b,0);
   const frag=document.createDocumentFragment();
@@ -950,6 +969,7 @@ function renderRouting(r){
     tile("Requests · last hour", `${f0(h.total)} <small>${h.total?Math.round(100*h.cloud/h.total):0}% cloud</small>`,
          `local ${f0(h.local)} · cloud ${f0(h.cloud)} · ${fmtTargets(h.by_target)}`,
          Object.entries(h.by_target).map(([t,n])=>[n,colorOf(t)])),
+    whyTile(r.cloud_why_h1||{}, r.fallbacks_h1||0),
     tile("New conversations · last hour", `${f0(r.new_h1)}`,
          Object.entries(r.rules_h1||{}).map(([k,n])=>`${k} ${n}`).join(" · ") || "none"),
     tile(`Active pins · ${pm.mode||"?"}`, `${mainN} <small>main</small> ${subN} <small>sub</small>`,
@@ -965,6 +985,7 @@ function renderRouting(r){
          + `${md.would?` · ${md.would} shadow-only`:""}${md.helper_no?` · helper said no ${md.helper_no}`:""}`
          + `${md.video_done||md.video_failed?` · video ${md.video_done} done / ${md.video_failed} failed`:""}${md.errors?` · ${md.errors} errors`:""}`,
          [[md.applied,CLOUD],[md.would,"#f0a92b88"],[md.helper_no,"#565f68"],[md.video_failed,"#ff4d4d"]]),
+    hrTile("last hour",hr.h1), hrTile("24 h",hr.d1),
     tile(`Rescues · 24 h · ${mv("rescue")}`, `${f0(rs.total)} <small>text → tool call</small>`,
          `${Object.entries(rs.tools||{}).map(([k,n])=>`${k} ${n}`).join(" · ")||"none"}${rs.total&&rs.applied<rs.total?` · ${rs.total-rs.applied} shadow`:""}`
          + `${(rs.models||[]).length?" · "+rs.models.join(", "):""}${rs.errors?` · ${rs.errors} errors`:""}`),

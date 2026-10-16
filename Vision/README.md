@@ -11,10 +11,10 @@ generated images            -> judge/rank.py -> ultron/judge (SkyJM-Gen-4B on th
 
 | Folder | What | Runs on | Deployed by |
 |---|---|---|---|
-| [`media/`](media/) | `ultron_media.py`, the LiteLLM hook that answers "generate an image / make a video / edit this photo / search the web / attached audio" from the cloud endpoint (`OMNIROUTE_BASE` in `~/.litellm/env`) instead of a tier, plus its tests. Details: [../litellm/README.md](../litellm/README.md) | the Mac, `~/.litellm/` | `./deploy.py push litellm` |
+| [`media/`](media/) | `ultron_media.py`, the LiteLLM hook that answers "generate an image / make a video / edit this photo / search the web / attached audio" from the cloud endpoint (`OMNIROUTE_BASE` in `~/.litellm/env`) instead of a tier, plus its tests. With `ULTRON_COMFY_URL` set (the GPU box's ComfyUI) image generation and photo edits go there first and overflow to the cloud endpoint when it is off or busy; copy `comfyui/workflows/zimage-turbo-generate.api.json` and `flux2-klein-edit.api.json` to `~/.ultron/comfy/` (`ULTRON_COMFY_WORKFLOWS`). Details: [../litellm/README.md](../litellm/README.md) | the Mac, `~/.litellm/` | `./deploy.py push litellm` |
 | [`comfyui/`](comfyui/) | ComfyUI on the GPU box: API-format workflows, the pinned custom nodes and models, the service scripts | the GPU box | [`gpu-box/deploy.py`](../gpu-box/README.md) |
 | [`open-webui/`](open-webui/README.md) | Open WebUI's image and video settings and the `generate_video` tool | the Open WebUI host (any machine) | by hand (README) |
-| [`judge/`](judge/README.md) | `rank.py`: pairwise ranking of generated images with `ultron/judge` | any machine, calls the Mac | — |
+| [`judge/`](judge/README.md) | `rank.py`: pairwise ranking of generated images with `ultron/judge`; also an optional JEV-27B-VL `/v1/decide` server (`serve_decide_mlx.py`) | any machine, calls the Mac | — |
 
 Shared config stays with the component that owns the file: `litellm/config.yaml` keeps the `media/*` model
 entries, `litellm/tiers.conf` the `[judge]` section, and `caddy/Caddyfile` serves `/media/` (the files the media

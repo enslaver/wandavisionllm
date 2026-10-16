@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Optional **Headroom** compression of every chat request, in-process (`ultron_headroom`; `pip install
+  headroom-ai`, then `~/.ultron/headroom-mode` = `on`; off by default). Local only, per-request opt-out with
+  `x-headroom: off`, savings tiles and a log tab in Wanda.
+- Optional **Hindsight** memory hook (`ultron_hindsight`): recalls notes into a conversation and retains new
+  turns. Needs `ULTRON_HINDSIGHT_URL`; off by default (Wanda: Memory).
+- Per-request `reasoning_effort` on the mtplx tiers through `mtplx/bin/mtplx_effort.py` (tier key `effort`),
+  with `effort_cap`, `max_output_tokens`, `check_endpoint`, `reasoning_content` and `reasoning_effort` tier keys.
+- Admission sends a tier to the cloud after the server refuses for memory, after a session-cache shed loses
+  tokens, or while its disk saves are backed up; local-to-cloud fallback after the retries; a tier-lock file
+  pins routing during a swap; `x-ultron-injected` response header.
+- Drops tool calls with empty arguments from history when the request's tool schemas require arguments.
+- `litellm/bench.py` tier benchmark; Wanda tiles for why requests went to the cloud.
+- Media hook tries a local ComfyUI first (`ULTRON_COMFY_URL`); optional Decisions API pass-through and a
+  decide server for the image judge (`Vision/judge/serve_decide_mlx.py`).
+
+### Changed
+
+- **Replaces the optional bili compression** (0.3.0) with Headroom: the `bili` component, LaunchAgent, Caddy
+  route and Wanda switch are gone.
+- Fable now runs on Splash (`brew install incoai/tap/splash`); the TensorFold script stays as
+  `tier-fable-tensorfold.sh` for rollback.
+- Example tiers: context 229376 with a 32768-token output cap, session banks 4/4/3 GB, sonnet unloads after
+  10 minutes idle (`ttl = 600`), sonnet effort capped at `high`.
+- Loop breaker also catches a call that recurs among other calls.
+
 ## [0.3.0] - 2026-10-06
 
 ### Added

@@ -1,7 +1,10 @@
 """Decision table, matrix, pins and shadow/enforce behavior against a mocked llama-swap."""
 
+import os
+import re
 import asyncio
 import json
+import time
 
 import pytest
 
@@ -233,6 +236,36 @@ def test_shadow_logs_without_rewriting_but_honors_explicit_overrides(adm, tmp_pa
     assert m2["model"] == "cloud/haiku"
 
 
+def test_cloud_only_moves_live_local_conversations_too(adm, tmp_path):
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    run(adm.admit(req(), "anthropic_messages", "enforce"))  # pinned ultron/opus
+    (tmp_path / "route-mode").write_text("cloud-only\n")
+    d = req(cid="c2")
+    out = run(adm.admit(d, "anthropic_messages", "enforce"))
+    assert d["model"] == "cloud/opus" and out["overflow"] == "route-mode" and out["rule"] == "pinned:1:loaded"
+    assert adm.recent["c2"].endswith("; overflow=route-mode")
+    p = req(session="S7", cid="p1", x_route="private")
+    run(adm.admit(p, "anthropic_messages", "enforce"))
+    assert p["model"] == "ultron/opus"  # private never goes to cloud
+    (tmp_path / "route-mode").write_text("auto\n")
+    d3 = req(cid="c3")
+    run(adm.admit(d3, "anthropic_messages", "enforce"))
+    assert d3["model"] == "ultron/opus"  # the pin was never moved
+
+
+def test_judge_decide_pass_through_is_admitted_as_the_judge(adm, monkeypatch):
+    class Logging:
+        litellm_call_id = "j1"
+    body = {"kind": "noul", "question": "q?", "state": "s", "litellm_logging_obj": Logging()}
+    assert ua.decide_call_id(body, "pass_through_endpoint") == "j1"
+    assert ua.decide_call_id(body, "acompletion") is None
+    assert ua.decide_call_id({"litellm_logging_obj": Logging()}, "pass_through_endpoint") is None
+    out = run(adm.admit(body, "pass_through_endpoint", "shadow"))  # shadow: no waiting for evictees
+    assert out["rule"] == "direct" and out["call_id"] == "j1" and adm.recent["j1"].startswith("ultron/judge")
+    assert set(body) == {"kind", "question", "state", "litellm_logging_obj"}  # the judge's body goes on unchanged
+    assert run(adm.admit({"litellm_logging_obj": Logging()}, "pass_through_endpoint", "enforce")) is None
+
+
 def test_explicit_cloud_model_is_left_alone(adm):
     d = req(model="cloud/sonnet")
     assert run(adm.admit(d, "acompletion", "enforce")) is None and d["model"] == "cloud/sonnet"
@@ -391,6 +424,110 @@ def test_read_mem_parses_sysctl(monkeypatch):
     assert m["pressure"] == 2 and m["headroom"] is None and m["swapouts"] is None
 
 
+def test_shed_event_picks_sheds_that_threw_cache_away():
+    now = 10_000.0
+    shed = lambda ts, prompt, reuse, mode="live_session", shared=None, **kw: dict(
+        {"ts": ts, "action": "prefill_admission_shed", "prompt_tokens": prompt, "reusable_prefix_tokens": reuse,
+         "reusable_prefix_mode": mode, "miss_tokens": prompt - reuse},
+        **({"kept_session_entries": {"longest_shared_prefix_tokens": shared}} if shared is not None else {}), **kw)
+    assert ua.shed_event(None, now) is None and ua.shed_event([], now) is None
+    growth = shed(now - 5, 87000, 74000)                      # the turn's new 13k tokens, cache kept: routine
+    small_new = shed(now - 5, 17000, 0, mode="none")          # 17k from nothing: may just be a new conversation
+    trims = {"ts": now - 5, "action": "pressure_trim", "level": 4}  # mtplx relieving pressure, nothing lost
+    assert ua.shed_event([growth, small_new, trims], now) is None
+    lost = shed(now - 8, 34411, 9216, mode="near_prefix", shared=34301)
+    assert ua.shed_event([growth, lost], now) == {"ts": now - 8, "why": "shed lost 25k (9k/34k)"}
+    assert ua.shed_event([shed(now - 8, 34411, 30000, shared=34301)], now) is None  # lost 4k: under the bar
+    assert ua.shed_event([shed(now - 3, 79898, 0, mode="none")], now)["why"] == "shed cold 0k/79k"
+    abort = {"ts": now - 2, "action": "prefill_system_abort", "reason": "death_signature"}
+    assert ua.shed_event([lost, abort], now)["why"] == "prefill_system_abort"  # newest wins
+    assert ua.shed_event([dict(abort, ts=now - ua.SHED_LOOKBACK_S - 1)], now) is None  # stale
+
+
+def test_shed_holds_are_per_tier(adm, monkeypatch):
+    monkeypatch.setattr(ua, "SHED_HOLD_S", {"opus": 60.0, "sonnet": 30.0})
+    shed = {"ts": 1000.0, "why": "prefill_system_abort"}
+    assert adm.note_shed("sonnet", shed) and not adm.note_shed("sonnet", shed)  # same shed once
+    assert adm.shed_hold("sonnet", 1029) == "mtplx sonnet prefill_system_abort" and adm.shed_hold("sonnet", 1031) is None
+    assert adm.shed_hold("opus", 1001) is None  # another tier's shed doesn't move opus work
+    assert not adm.note_shed("haiku", shed)  # no hold configured: off
+    adm.fake = st(opus=(0, 0), sonnet=(0, 0), haiku=(0, 0))
+    adm.note_shed("sonnet", {"ts": time.time(), "why": "shed lost 25k (9k/34k)"})
+    d = req(model="claude-sonnet-4-6", session="S9", cid="s9")
+    out = run(adm.admit(d, "acompletion", "enforce"))
+    assert d["model"] == "cloud/sonnet" and out["overflow"] == "shed" and out["shed"].startswith("mtplx sonnet shed lost")
+    assert adm.recent["s9"].endswith("; overflow=shed; shed=mtplx sonnet shed lost 25k (9k/34k)")
+    o = req(model="claude-opus-5-5", session="S9", cid="o9")
+    run(adm.admit(o, "acompletion", "enforce"))
+    assert o["model"] == "ultron/opus"
+    p = req(model="claude-sonnet-4-6", session="S8", cid="p8", x_route="private")
+    run(adm.admit(p, "acompletion", "enforce"))
+    assert p["model"] == "ultron/sonnet"  # private never goes to cloud
+
+
+def test_backlog_of_disk_saves_sends_that_tier_to_cloud(adm, monkeypatch):
+    monkeypatch.setattr(ua, "BACKLOG_GB", 2.0)
+    G = 2**30
+    rows = adm.note_backlogs({"sonnet": {"backlog": int(1.5 * G)}, "opus": {"backlog": 0}}, 100.0)
+    assert rows == [] and adm.backlog_hold("sonnet") is None
+    rows = adm.note_backlogs({"sonnet": {"backlog": int(7.5 * G)}, "opus": {"backlog": 0}}, 101.0)
+    assert rows == [{"ts": 101.0, "event": "backlog", "tier": "sonnet", "pending_gb": 7.5}]
+    assert adm.note_backlogs({"sonnet": {"backlog": int(1.5 * G)}}, 140.0) == []  # still over half: held
+    assert adm.backlog_hold("sonnet") == "mtplx sonnet 1.5G saves pending" and adm.backlog_hold("opus") is None
+    adm.fake = st(opus=(0, 0), sonnet=(0, 0), haiku=(0, 0))
+    d = req(model="claude-sonnet-4-6", session="B1", cid="b1")
+    out = run(adm.admit(d, "acompletion", "enforce"))
+    assert d["model"] == "cloud/sonnet" and out["overflow"] == "backlog" and out["backlog"].startswith("mtplx sonnet")
+    assert adm.recent["b1"].endswith("; overflow=backlog; backlog=mtplx sonnet 1.5G saves pending")
+    o = req(session="B1", cid="o1")
+    run(adm.admit(o, "acompletion", "enforce"))
+    assert o["model"] == "ultron/opus"  # other tiers unaffected
+    p = req(model="claude-sonnet-4-6", session="B2", cid="p1", x_route="private")
+    run(adm.admit(p, "acompletion", "enforce"))
+    assert p["model"] == "ultron/sonnet"  # private never goes to cloud
+    rows = adm.note_backlogs({"sonnet": {"backlog": int(0.5 * G)}}, 160.0)
+    assert rows == [{"ts": 160.0, "event": "backlog_clear", "tier": "sonnet", "pending_gb": 0.5, "held_s": 59}]
+    assert adm.backlog_hold("sonnet") is None
+    adm.note_backlogs({"opus": {"backlog": 3 * G}}, 170.0)
+    assert adm.note_backlogs({}, 171.0)[0]["event"] == "backlog_clear"  # tier unloaded: its saves are gone
+    monkeypatch.setattr(ua, "BACKLOG_GB", 0.0)
+    assert adm.note_backlogs({"opus": {"backlog": 9 * G}}, 180.0) == []  # 0: off
+
+
+def test_read_state_reports_sheds_per_tier(monkeypatch):
+    now = time.time()
+    snaps = {
+        "http://127.0.0.1:18004": {"active_requests": 0, "memory_guard_events": [
+            {"ts": now - 20, "action": "prefill_admission_shed", "prompt_tokens": 60000, "reusable_prefix_tokens": 2816,
+             "reusable_prefix_mode": "live_session", "kept_session_entries": {"longest_shared_prefix_tokens": 57000}}]},
+        "http://127.0.0.1:18005": {"active_requests": 1, "scheduler": {"telemetry": {"persistence_pending_bytes": 7573005312}},
+                                   "mem": {"phys_footprint_bytes": 15 * 2**30, "host_overhang_bytes": 5.4 * 2**30},
+                                   "memory_guard_events": [
+            {"ts": now - 3, "action": "prefill_system_abort"}, {"ts": now - 1, "action": "pressure_trim", "level": 4}]},
+    }
+
+    def get_json(url, timeout=1.5):
+        if url.endswith("/running"):
+            return {"running": [{"model": "opus", "state": "ready", "proxy": "http://127.0.0.1:18004"},
+                                {"model": "sonnet", "state": "ready", "proxy": "http://127.0.0.1:18005"}]}
+        return snaps[url.rsplit("/v1/", 1)[0]]
+    monkeypatch.setattr(ua, "_get_json", get_json)
+    monkeypatch.setattr(ua, "read_mem", lambda: {"t": now, "pressure": 1, "headroom": 9 * 2**30})
+    st_ = ua.read_state()
+    assert st_["tiers"]["sonnet"]["shed"]["why"] == "prefill_system_abort" and st_["tiers"]["sonnet"]["active"] == 1
+    assert st_["tiers"]["opus"]["shed"]["why"] == "shed lost 54k (2k/60k)"
+    assert st_["tiers"]["sonnet"]["backlog"] == 7573005312 and st_["tiers"]["opus"]["backlog"] == 0
+    assert st_["tiers"]["sonnet"]["fp"] == 15 * 2**30 and st_["tiers"]["opus"]["fp"] is None
+
+
+def test_admit_rows_carry_tier_footprints(adm):
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    adm.fake["tiers"]["opus"].update(fp=int(30.2 * 2**30), host=int(2.2 * 2**30))
+    out = run(adm.admit(req(cid="f1"), "acompletion", "enforce"))
+    assert out["loaded"]["opus"] == {"state": "ready", "active": 0, "waiting": 0, "fp_gb": 30.2, "host_gb": 2.2}
+    assert out["loaded"]["haiku"] == {"state": "ready", "active": 0, "waiting": 0}  # no snapshot: no fields
+
+
 def test_mem_guard_triggers_and_holds():
     a = ua.Admission()
     G = 2**30
@@ -443,6 +580,100 @@ def test_pinned_local_conversation_overflows_while_memory_is_tight(adm):
     run(adm.admit(n2, "anthropic_messages", "enforce"))
     assert d2["model"] == "ultron/opus" and n2["model"] == "ultron/opus"
     assert adm.recent["c5"].startswith("ultron/opus; rule=repin:1:loaded")
+
+
+REFUSAL = Exception('litellm.APIError: APIError: Hosted_vllmException - {"error":{"message":"insufficient memory: '
+                   'the other apps on this Mac leave 6.1 GiB free, and this prompt needs about 0.7 GiB more"}}')
+
+
+def test_mtplx_refusal_sends_that_conversation_to_cloud(adm, monkeypatch):
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    d = req()
+    run(adm.admit(d, "anthropic_messages", "enforce"))  # pins ultron/opus
+    hook = ua.UltronAdmit()
+    hook.admission = adm
+    run(hook.async_post_call_failure_hook(d, REFUSAL, None))
+    last = json.loads(open(ua.LOG_PATH).read().splitlines()[-1])
+    assert last["event"] == "refused" and last["key"] == "cc:S1:main:opus" and last["detail"].startswith("insufficient memory")
+    assert "target" not in last  # Wanda's routing tiles count rows with a target
+    # the guard is tripped for MEM_HOLD_S: mem_guard keeps the refusal as its reason
+    G = 2**30
+    assert adm.mem_guard({"t": time.time(), "pressure": 1, "headroom": 10 * G}) == "refused opus"
+    # the retry (guard since cleared) still goes to cloud; the pin stays local
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    r = req(cid="c2")
+    run(adm.admit(r, "anthropic_messages", "enforce"))
+    assert r["model"] == "cloud/opus" and adm.recent["c2"].endswith("overflow=refused")
+    # another conversation is unaffected
+    o = req(session="S2", cid="c3")
+    run(adm.admit(o, "anthropic_messages", "enforce"))
+    assert o["model"] == "ultron/opus"
+    # after REFUSED_HOLD_S it comes back local
+    adm.refused[last["key"]] = time.time() - 1
+    b = req(cid="c4")
+    run(adm.admit(b, "anthropic_messages", "enforce"))
+    assert b["model"] == "ultron/opus" and adm.recent["c4"].startswith("ultron/opus; rule=pinned:1:loaded")
+
+
+def test_refusal_ignores_other_errors_and_private(adm):
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    hook = ua.UltronAdmit()
+    hook.admission = adm
+    d = req()
+    run(adm.admit(d, "anthropic_messages", "enforce"))
+    run(hook.async_post_call_failure_hook(d, Exception("Connection reset"), None))
+    run(hook.async_post_call_failure_hook({**d, "model": "cloud/opus"}, REFUSAL, None))
+    assert adm.refused == {}
+    p = req(session="S9", x_route="private", cid="p1")
+    run(adm.admit(p, "anthropic_messages", "enforce"))
+    run(hook.async_post_call_failure_hook(p, REFUSAL, None))
+    p2 = req(session="S9", x_route="private", cid="p2")
+    run(adm.admit(p2, "anthropic_messages", "enforce"))
+    assert p2["model"] == "ultron/opus"  # private never goes to cloud, refused or not
+
+
+def test_router_fallback_to_cloud_is_noted_and_holds_the_conversation(adm, monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")  # pre-call hook: only the fallback opt-out here
+    adm.fake = st(opus=(0, 0), haiku=(0, 0))
+    hook = ua.UltronAdmit()
+    hook.admission = adm
+    d = req()
+    run(adm.admit(d, "anthropic_messages", "enforce"))  # ultron/opus
+    run(hook.async_pre_call_hook(None, None, d, "anthropic_messages"))
+    assert "disable_fallbacks" not in d  # a failed local request may fall back to cloud
+    cloud = {"model": "openai/custom-opus", "api_base": "https://omniroute.example/v1", "litellm_call_id": "c1",
+             "metadata": {"model_group": "cloud/opus"}, "messages": [{"role": "user", "content": "build the level"}]}
+    run(hook.async_pre_call_deployment_hook(dict(cloud), "acompletion"))
+    run(hook.async_pre_call_deployment_hook(dict(cloud), "acompletion"))  # runs twice per /v1/messages
+    assert adm.recent["c1"].endswith("; fallback=cloud/opus") and adm.recent["c1"].count("fallback=") == 1
+    rows = [json.loads(x) for x in open(ua.LOG_PATH).read().splitlines()]
+    fb = [r for r in rows if r.get("event") == "fallback"]
+    assert len(fb) == 1 and fb[0]["tier"] == "opus" and fb[0]["key"] == "cc:S1:main:opus" and "target" not in fb[0]
+    r = req(cid="c2")  # the conversation's next request goes to cloud for REFUSED_HOLD_S; the pin stays local
+    run(adm.admit(r, "anthropic_messages", "enforce"))
+    assert r["model"] == "cloud/opus" and "overflow=refused" in adm.recent["c2"]
+    run(hook.async_pre_call_deployment_hook({**cloud, "litellm_call_id": "c2"}, "acompletion"))
+    assert "fallback=" not in adm.recent["c2"]  # admitted to cloud: not a fallback
+    p = req(session="S9", x_route="private", cid="p1")
+    run(hook.async_pre_call_hook(None, None, p, "anthropic_messages"))
+    assert p["disable_fallbacks"] is True  # private never falls back to cloud
+    with open(ua.ROUTE_MODE_FILE, "w") as f:
+        f.write("local-only")
+    q = req(session="S8", cid="q1")
+    run(hook.async_pre_call_hook(None, None, q, "anthropic_messages"))
+    assert q["disable_fallbacks"] is True
+
+
+def test_config_falls_back_from_each_local_tier_to_its_cloud_twin():
+    import yaml
+    import ultron_tiers
+    t = ua.tiers()
+    block = ultron_tiers.blocks(t)["__TIERS_FALLBACKS__"]
+    fb = {k: v for d in yaml.safe_load(block)["fallbacks"] for k, v in d.items()}
+    assert fb == {f"ultron/{n}": [f"cloud/{n}"] for n in t.names if t.has_cloud(n)}
+    assert fb and not any(k.startswith("cloud/") for k in fb)  # never cloud -> local
+    cfg = open(os.path.join(os.path.dirname(__file__), "config.yaml")).read()
+    assert "# __TIERS_FALLBACKS__" in cfg
 
 
 def test_private_stays_local_while_memory_is_tight(adm):
@@ -556,6 +787,61 @@ def test_repair_split_tool_calls_edge_cases():
     assert ua.repair_split_tool_calls(lone) == [{"role": "assistant", "content": "hi"}, {"role": "user", "content": "next"}]
 
 
+def test_drop_empty_tool_calls():
+    # fable/Splash emits `arguments: "{}"`; the client's validation error must not become part of history
+    msgs = [{"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(1, "bash", "{}")]},
+            {"role": "tool", "tool_call_id": "c1", "content": 'Validation failed for tool "bash": - command: must have required properties command'},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(2, "bash", '{"command": "ls"}')]},
+            {"role": "tool", "tool_call_id": "c2", "content": "ok"}]
+    out = ua.drop_empty_tool_calls(msgs)
+    assert [m["role"] for m in out] == ["user", "assistant", "tool"]
+    assert out[1]["tool_calls"][0]["id"] == "c2" and out[2]["tool_call_id"] == "c2"
+    assert msgs[1]["tool_calls"][0]["id"] == "c1"  # input untouched
+    clean = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "", "tool_calls": [_fn(1, "bash", '{"command": "ls"}')]}]
+    assert ua.drop_empty_tool_calls(clean) is clean  # nothing to drop: same list back (prefix cache)
+    assert ua.drop_empty_tool_calls([{"role": "assistant", "content": "", "tool_calls": [_fn(1, "bash", "{}")]}]) == []
+    # one empty call beside a real one: only the empty one goes
+    mixed = [{"role": "user", "content": "go"},
+             {"role": "assistant", "content": "", "tool_calls": [_fn(1, "bash", "{}"), _fn(2, "bash", '{"command": "pwd"}')]},
+             {"role": "tool", "tool_call_id": "c1", "content": "e"},
+             {"role": "tool", "tool_call_id": "c2", "content": "/x"}]
+    out = ua.drop_empty_tool_calls(mixed)
+    assert [c["id"] for c in out[1]["tool_calls"]] == ["c2"] and len(out) == 3
+    # 2026-10-14: gate on the request's own schemas - a zero-argument tool is called with {} by design
+    schemas = [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]}}},
+               {"type": "function", "function": {"name": "murmur_check_messages", "parameters": {"type": "object", "properties": {}}}}]
+    assert [c["id"] for c in ua.drop_empty_tool_calls(mixed, schemas)[1]["tool_calls"]] == ["c2"]
+    zero = [{"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(1, "murmur_check_messages", "{}")]},
+            {"role": "tool", "tool_call_id": "c1", "content": "no new messages"}]
+    assert ua.drop_empty_tool_calls(zero, schemas) is zero
+    unknown = [{"role": "assistant", "content": "", "tool_calls": [_fn(1, "mcp__thing", "{}")]}]
+    assert ua.drop_empty_tool_calls(unknown, schemas) is unknown  # undeclared name: cannot tell, leave it
+
+def test_deployment_hook_keeps_a_declared_zero_argument_call():
+    hook = ua.UltronAdmit()
+    msgs = [{"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(1, "murmur_check_messages", "{}")]},
+            {"role": "tool", "tool_call_id": "c1", "content": "no new messages"}]
+    tools = [{"type": "function", "function": {"name": "murmur_check_messages", "parameters": {"type": "object", "properties": {}}}}]
+    kw = {"model": "hosted_vllm/sonnet", "api_base": "http://127.0.0.1:8001/v1", "messages": list(msgs), "tools": tools}
+    out = asyncio.run(hook.async_pre_call_deployment_hook(kw, None))["messages"]
+    assert [c["id"] for m in out if m.get("tool_calls") for c in m["tool_calls"]] == ["c1"]
+
+def test_deployment_hook_drops_empty_tool_calls():
+    hook = ua.UltronAdmit()
+    msgs = [{"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(1, "bash", "{}")]},
+            {"role": "tool", "tool_call_id": "c1", "content": "e"},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(2, "bash", '{"command": "ls"}')]},
+            {"role": "tool", "tool_call_id": "c2", "content": "ok"}]
+    for model, base in (("hosted_vllm/sonnet", "http://127.0.0.1:8001/v1"), ("hosted_vllm/fable", "http://127.0.0.1:8001/v1"),
+                        ("openai/custom-sonnet", "https://omniroute.example.com/v1")):
+        out = asyncio.run(hook.async_pre_call_deployment_hook({"model": model, "api_base": base, "messages": list(msgs)}, None))["messages"]
+        assert [c["id"] for m in out if m.get("tool_calls") for c in m["tool_calls"]] == ["c2"], model
+        assert [m.get("tool_call_id") for m in out if m.get("role") == "tool"] == ["c2"], model
+
 def test_deployment_hook_repairs_split_calls_on_every_deployment():
     hook = ua.UltronAdmit()
     msgs = [{"role": "user", "content": "go"},
@@ -619,7 +905,8 @@ def test_trace_tap(tmp_path, monkeypatch):
     hook = ua.UltronAdmit()
     hook.admission.keys["cid-1"] = "cc:abc/def:main"
     tools = [{"type": "function", "function": {"name": "Bash"}}]
-    msgs = [{"role": "user", "content": "go"}, {"role": "assistant", "content": "", "reasoning_content": "r", "tool_calls": [_call(1)]},
+    msgs = [{"role": "user", "content": "go"}, {"role": "assistant", "content": "", "reasoning_content": "r",
+             "tool_calls": [_fn(1, "Bash", '{"command": "ls"}')]},
             {"role": "tool", "tool_call_id": "c1", "content": "out"}, {"role": "system", "content": REM}]
     run = lambda **kw: asyncio.run(hook.async_pre_call_deployment_hook(
         {"model": "hosted_vllm/sonnet", "api_base": "http://127.0.0.1:8001/v1", "messages": list(msgs), **kw}, None))
@@ -650,6 +937,22 @@ def test_fill_array_items():
     assert ua.fill_array_items(tools) == 0 and ua.fill_array_items(None) == 0
 
 
+def test_decisions_pass_through_gets_the_default_model_and_nothing_else(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "enforce")
+    monkeypatch.setattr(ua, "route_mode", lambda: "local-only")   # would set disable_fallbacks on a chat call
+    monkeypatch.setattr(ua, "DECISIONS_MODEL", "vendor/model-1")
+    hook = ua.UltronAdmit()
+    body = {"state": "ticket text", "questions": {"team": {"type": "choice", "instructions": "Who handles it?"}}}
+    out = asyncio.run(hook.async_pre_call_hook(None, None, body, "pass_through_endpoint"))
+    assert out == {"model": "vendor/model-1", "state": "ticket text", "questions": body["questions"]}  # the body sent upstream
+    own = {"model": "vendor/other", "questions": {}}
+    asyncio.run(hook.async_pre_call_hook(None, None, own, "pass_through_endpoint"))
+    assert own["model"] == "vendor/other"
+    chat = {"model": "claude-opus-5-5", "questions": {}}   # only pass-throughs are touched
+    assert ua.default_decisions_model(chat, "acompletion") is False and chat["model"] == "claude-opus-5-5"
+    assert ua.default_decisions_model({"kind": "noul", "question": "q"}, "pass_through_endpoint") is False
+
+
 def test_pre_call_hook_fills_items_even_when_admit_off(monkeypatch):
     monkeypatch.setattr(ua, "admit_mode", lambda: "off")
     data = {"model": "claude-opus-5-5", "tools": [{"name": "T", "input_schema": {"type": "object", "properties": {"x": {"type": "array"}}}}]}
@@ -667,9 +970,7 @@ def test_example_matrix_fable_swaps_only_opus():
     assert ua.evictees("fable", {"opus", "sonnet", "haiku"}, sets, costs) == {"opus"}
     assert ua.evictees("opus", {"fable", "sonnet", "haiku"}, sets, costs) == {"fable"}
     assert ua.evictees("sonnet", {"fable", "haiku"}, sets, costs) == set()
-    assert ua.evictees("judge", {"opus", "sonnet", "haiku"}, sets, costs) == {"opus"}  # never sonnet or haiku
-    assert ua.evictees("judge", {"fable", "sonnet", "haiku"}, sets, costs) == {"fable"}
-    assert ua.evictees("opus", {"sonnet", "haiku", "judge"}, sets, costs) == {"judge"}
+    assert ua.evictees("opus", {"sonnet", "haiku"}, sets, costs) == set()
 
 
 # ----------------------------------------------------------------------------- memory gate (local only)
@@ -815,7 +1116,9 @@ def test_routed_no_rules():
 def test_cloud_entries_cache_and_never_fall_back():
     import ultron_tiers
     b = ultron_tiers.blocks(ua.tiers())
-    assert b["__TIERS_FALLBACKS__"].startswith("fallbacks: []")
+    fb = b["__TIERS_FALLBACKS__"]  # local -> cloud only, one entry per tier with a cloud twin
+    assert not any('"cloud/' in line.split(":")[0] for line in fb.splitlines())
+    assert fb.count("[") == len([n for n in ua.tiers().names if ua.tiers().has_cloud(n)])
     assert b["__TIERS_MODEL_LIST__"].count("cache_control_injection_points") == len(
         [n for n in ua.tiers().names if ua.tiers().has_cloud(n)])
 
@@ -860,7 +1163,7 @@ def test_docs_to_text(monkeypatch):
     pdf = "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.7 x").decode()
     img = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
     msgs = [{"role": "user", "content": "summarize the pdf"},
-            {"role": "assistant", "content": "", "tool_calls": [_call(1)]},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(1, "Bash", '{"command": "cat doc.pdf"}')]},
             {"role": "tool", "tool_call_id": "c1", "content": [{"type": "image_url", "image_url": {"url": pdf}}]},
             {"role": "user", "content": [img, {"type": "file", "file": {"file_data": "data:text/plain;base64,"
                                                                        + base64.b64encode(b"notes").decode()}},
@@ -881,36 +1184,6 @@ def test_docs_to_text(monkeypatch):
     assert "no text layer" in ua.docs_to_text(msgs)[2]["content"][0]["text"]
     cloud = {"model": "openai/anthropic/claude-opus-5.5", "api_base": "https://omniroute.example.com/v1", "messages": msgs}
     assert asyncio.run(hook.async_pre_call_deployment_hook(cloud, None))["messages"][2] is msgs[2]  # cloud: untouched
-
-
-def test_one_shot_local_requests_skip_the_mtplx_bank():
-    hook = ua.UltronAdmit()
-    local = "http://127.0.0.1:8001/v1"
-    tools = [{"type": "function", "function": {"name": "Bash"}}]
-    first = [{"role": "user", "content": "title this"}]
-    later = first + [{"role": "assistant", "content": "ok"}, {"role": "user", "content": "more"}]
-
-    def run(model="hosted_vllm/haiku", base=local, msgs=first, cid=None, **kw):
-        out = asyncio.run(hook.async_pre_call_deployment_hook(
-            {"model": model, "api_base": base, "messages": list(msgs), "litellm_call_id": cid, **kw}, None))
-        return (out.get("extra_headers") or {}).get("x-mtplx-cache-mode")
-
-    assert run() == "bypass"                                      # single-turn, no tools
-    assert run(model="hosted_vllm/sonnet") == "bypass"            # every local tier
-    assert run(tools=tools) is None                               # an agent's first turn will be continued
-    assert run(msgs=later) is None                                # a conversation already under way
-    assert run(model="openai/anthropic/claude-haiku-4.5", base="https://omniroute.example.com/v1") is None
-    hook.admission.recent["c1"] = "ultron/sonnet; rule=pinned:1:loaded; applied; vision->sonnet"
-    assert run(msgs=later, tools=tools, cid="c1") == "bypass"     # image rerouted off a no-vision tier: one request
-    assert hook.admission.recent["c1"].endswith("; bank=off(vision)")
-    assert run(extra_headers={"X-Other": "1"}) == "bypass"        # merges with headers already set
-
-
-def test_one_shot():
-    assert ua.one_shot([{"role": "user", "content": "x"}], None) == "single-turn"
-    assert ua.one_shot([{"role": "user", "content": "x"}], [{"name": "Bash"}]) is None
-    assert ua.one_shot([{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}], None) is None
-    assert ua.one_shot([], [{"name": "Bash"}], "ultron/sonnet; vision->sonnet") == "vision"
 
 
 # ----------------------------------------------------------------------------- routed = no (the image judge)
@@ -974,66 +1247,213 @@ def test_opus_reload_waits_for_a_busy_judge(adm, monkeypatch):
     assert d["model"] == "cloud/opus" and adm.recent["o1"].endswith("overflow=evict-busy")
 
 
-def test_bili_routes_chat_to_routed_tiers_and_cloud(tmp_path, monkeypatch):
-    monkeypatch.setenv("OMNIROUTE_BASE", "https://omniroute.example.com/v1")
-    mode = tmp_path / "bili-mode"
-    monkeypatch.setattr(ua, "BILI_MODE_FILE", str(mode))
-    alive = [True]
-    monkeypatch.setattr(ua, "bili_alive", lambda: alive[0])
-    t = ua.tiers()
-    big, judge = t.routed()[0], next((n for n in t.names if not t.tier[n]["routed"]), None)
-    cloud_tier = next(n for n in t.routed() if t.tier[n]["cloud"])
+def test_one_shot_local_requests_skip_the_mtplx_bank():
     hook = ua.UltronAdmit()
-    hook.admission.keys["cid-1"] = f"h:8b07a98c:{big}"
-    hook.admission.recent["cid-1"] = "pinned:1:loaded"
+    local = "http://127.0.0.1:8001/v1"
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+    first = [{"role": "user", "content": "title this"}]
+    later = first + [{"role": "assistant", "content": "ok"}, {"role": "user", "content": "more"}]
+
+    def run(model="hosted_vllm/haiku", base=local, msgs=first, cid=None, **kw):
+        out = asyncio.run(hook.async_pre_call_deployment_hook(
+            {"model": model, "api_base": base, "messages": list(msgs), "litellm_call_id": cid, **kw}, None))
+        return (out.get("extra_headers") or {}).get("x-mtplx-cache-mode")
+
+    assert run() == "bypass"                                      # single-turn, no tools
+    assert run(model="hosted_vllm/sonnet") == "bypass"            # every local tier
+    assert run(tools=tools) is None                               # an agent's first turn will be continued
+    assert run(msgs=later) is None                                # a conversation already under way
+    assert run(model="openai/custom-haiku", base="https://omniroute.example.com/v1") is None
+    hook.admission.recent["c1"] = "ultron/haiku; rule=pinned:1:fits; applied; vision->haiku"
+    assert run(msgs=later, tools=tools, cid="c1") == "bypass"     # image rerouted off fable: one request on haiku
+    assert hook.admission.recent["c1"].endswith("; bank=off(vision)")
+    assert run(extra_headers={"X-Other": "1"}) == "bypass"        # merges with headers already set
+
+
+def test_one_shot():
+    assert ua.one_shot([{"role": "user", "content": "x"}], None) == "single-turn"
+    assert ua.one_shot([{"role": "user", "content": "x"}], [{"name": "Bash"}]) is None
+    assert ua.one_shot([{"role": "user", "content": "x"}, {"role": "assistant", "content": "y"}], None) is None
+    assert ua.one_shot([], [{"name": "Bash"}], "ultron/haiku; vision->haiku") == "vision"
+
+
+def test_reasoning_effort_is_echoed_for_mtplx_tiers_and_max_becomes_xhigh(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
     local, cloud = "http://127.0.0.1:8001/v1", "https://omniroute.example.com/v1"
-    run = lambda model, base, **kw: asyncio.run(hook.async_pre_call_deployment_hook(
-        {"model": model, "api_base": base, "messages": [{"role": "user", "content": "go"}], **kw}, None))
-    assert run(f"hosted_vllm/{big}", local)["api_base"] == local  # mode file missing -> off
-    mode.write_text("on\n")
-    out = run(f"hosted_vllm/{big}", local, litellm_call_id="cid-1", extra_headers={"x-mtplx-cache-mode": "bypass"})
-    assert out["api_base"] == "http://127.0.0.1:8787/bili/openai/http://127.0.0.1:8001/v1"
-    assert out["extra_headers"] == {"x-mtplx-cache-mode": "bypass", "x-acp-session": f"h-8b07a98c-{big}"}
-    assert hook.admission.recent["cid-1"] == "pinned:1:loaded; bank=off(single-turn); bili"
-    again = asyncio.run(hook.async_pre_call_deployment_hook(out, None))  # second pass of a /v1/messages request
-    assert again["api_base"] == out["api_base"] and hook.admission.recent["cid-1"].count("bili") == 1
-    assert "x-acp-session" in run(f"hosted_vllm/{big}", local)["extra_headers"]  # no admission key -> hashed fallback
-    if judge:
-        assert run(f"hosted_vllm/{judge}", local)["api_base"] == local  # routed = no: direct
-    cid = t.tier[cloud_tier]["cloud"]
-    assert run(f"openai/{cid}", cloud, metadata={"model_group": f"cloud/{cloud_tier}"})["api_base"] == f"http://127.0.0.1:8787/bili/openai/{cloud}"
-    assert run(f"openai/{cid}", cloud)["api_base"].startswith("http://127.0.0.1:8787/bili/")  # no metadata: by model id
-    assert run("openai/some-audio-model", cloud, metadata={"model_group": "media/transcribe"})["api_base"] == cloud
-    assert run("openai/other-model", "https://elsewhere.example.com/v1")["api_base"] == "https://elsewhere.example.com/v1"
-    assert asyncio.run(hook.async_pre_call_deployment_hook({"model": "openai/nomic-embed-text", "api_base": cloud,
-                                                            "input": ["x"]}, None))["api_base"] == cloud  # not chat
-    alive[0] = False
-    assert run(f"hosted_vllm/{big}", local)["api_base"] == local  # bili down -> direct
+    for cid, model, base, effort, want in (("c1", "hosted_vllm/opus", local, "max", "; effort=xhigh/32768"),
+                                           ("c2", "hosted_vllm/sonnet", local, "none", "; effort=none/1"),
+                                           ("c3", "hosted_vllm/haiku", local, "bogus", ""),
+                                           ("c4", "hosted_vllm/fable", local, "high", "; effort=high/16384"),
+                                           ("c5", "openai/custom-opus", cloud, "high", "")):
+        data = {"model": "ultron/x", "messages": [{"role": "user", "content": "go"}], "litellm_call_id": cid,
+                "reasoning_effort": effort}
+        asyncio.run(hook.async_pre_call_hook(None, None, data, "acompletion"))
+        assert data["reasoning_effort"] == ("xhigh" if effort == "max" else effort)
+        hook.admission.recent[cid] = "pinned"
+        kwargs = {"model": model, "api_base": base, "litellm_call_id": cid, "reasoning_effort": data["reasoning_effort"],
+                  "messages": [{"role": "user", "content": "go"}], "tools": [{"type": "function", "function": {"name": "Bash"}}]}
+        for _ in range(2):  # the /v1/messages bridge can run the hook twice
+            asyncio.run(hook.async_pre_call_deployment_hook(dict(kwargs), None))
+        assert re.sub(r"; sess=[^;]*", "", hook.admission.recent[cid]) == "pinned" + want, cid  # sess: its own test
+
+
+def test_fable_gets_thinking_budget_from_reasoning_effort_on_tensorfold(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    monkeypatch.setattr(ua, "BUDGET_TIERS", ("fable",))  # rollback config: TensorFold takes thinking_budget
+    hook = ua.UltronAdmit()
+    local = "http://127.0.0.1:8001/v1"
+    for model, effort, want in (("hosted_vllm/fable", "low", 2048), ("hosted_vllm/fable", "none", 1),
+                                ("hosted_vllm/fable", "bogus", None), ("hosted_vllm/opus", "low", None)):
+        kwargs = {"model": model, "api_base": local, "litellm_call_id": "b1", "reasoning_effort": effort,
+                  "messages": [{"role": "user", "content": "go"}], "extra_body": {"x": 1}}
+        hook.admission.recent["b1"] = "pinned"
+        out = asyncio.run(hook.async_pre_call_deployment_hook(kwargs, None))
+        assert (out or kwargs).get("extra_body", {}).get("thinking_budget") == want, (model, effort)
+        assert (out or kwargs)["extra_body"]["x"] == 1  # the caller's own extra_body survives
+
+
+def test_fable_on_splash_gets_no_budget_but_sampling_defaults(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
+    local = "http://127.0.0.1:8001/v1"
+    base = {"api_base": local, "litellm_call_id": "s1", "messages": [{"role": "user", "content": "go"}]}
+    hook.admission.recent["s1"] = "pinned"
+    out = asyncio.run(hook.async_pre_call_deployment_hook({**base, "model": "hosted_vllm/fable", "reasoning_effort": "high"}, None))
+    assert "thinking_budget" not in (out.get("extra_body") or {})  # Splash reads reasoning_effort natively
+    assert out["temperature"] == 0.6 and out["max_tokens"] == 32768 and out["repetition_penalty"] == 1.1
+    assert "effort=high/16384" in hook.admission.recent["s1"]
+    out = asyncio.run(hook.async_pre_call_deployment_hook(
+        {**base, "model": "hosted_vllm/fable", "temperature": 1.0, "max_completion_tokens": 100}, None))
+    assert out["temperature"] == 1.0 and "max_tokens" not in out  # the client's own values win
+    out = asyncio.run(hook.async_pre_call_deployment_hook({**base, "model": "hosted_vllm/opus"}, None))
+    assert "temperature" not in out and "max_tokens" not in out and "repetition_penalty" not in out  # other tiers keep their own server defaults
+
+
+def test_history_reasoning_content_for_fable():
+    a1 = {"role": "assistant", "content": None, "reasoning_content": " list it first ",
+          "thinking_blocks": [{"type": "thinking", "thinking": "list it first"}], "tool_calls": [_call(1)]}
+    a2 = {"role": "assistant", "content": [{"type": "text", "text": "Reading."}],
+          "thinking_blocks": [{"type": "thinking", "thinking": "now read"}]}
+    a3 = {"role": "assistant", "content": "plain"}
+    out = ua.normalize_history([{"role": "user", "content": "go"}, a1, a2, a3], reasoning_content=True)
+    assert out[1]["reasoning_content"] == "list it first" and "thinking_blocks" not in out[1]
+    assert out[1]["content"] is None and out[1]["tool_calls"] == [_call(1)]  # content untouched: no <think> block
+    assert out[2]["reasoning_content"] == "now read" and out[2]["content"] == a2["content"]
+    assert out[3] is a3
+
+
+def test_hosted_vllm_keeps_reasoning_content_only_for_fable():
+    pytest.importorskip("litellm")
+    from litellm.llms.hosted_vllm.chat.transformation import HostedVLLMChatConfig
+    assert ua.HOSTED_VLLM_REASONING_PATCHED
+    cfg = HostedVLLMChatConfig()
+    msgs = lambda: [{"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "x", "reasoning_content": "R",
+                     "thinking_blocks": [{"type": "thinking", "thinking": "R"}]}]
+    out = cfg._transform_messages(msgs(), "fable")
+    assert out[1]["reasoning_content"] == "R" and "thinking_blocks" not in out[1]
+    assert "reasoning_content" not in cfg._transform_messages(msgs(), "opus")[1]
+    assert asyncio.run(cfg._transform_messages(msgs(), "fable", is_async=True))[1]["reasoning_content"] == "R"
+
+
+def test_mtplx_tiers_get_a_named_session_per_conversation(monkeypatch):
+    inflight = {}
+    monkeypatch.setattr(ua, "litellm_inflight", lambda: inflight)
+    hook = ua.UltronAdmit()
+    local = "http://127.0.0.1:8001/v1"
+    tools = [{"type": "function", "function": {"name": "Bash"}}]
+    turn = [{"role": "user", "content": "go"}, {"role": "assistant", "content": "ok"}, {"role": "user", "content": "more"}]
+
+    def headers(cid, model="hosted_vllm/sonnet", msgs=turn, **kw):
+        out = asyncio.run(hook.async_pre_call_deployment_hook(
+            {"model": model, "api_base": local, "litellm_call_id": cid, "messages": list(msgs), "tools": tools, **kw}, None))
+        return out.get("extra_headers") or {}
+
+    hook.admission.keys.update({"c1": "h:8b07a98c:sonnet", "c2": "h:8b07a98c:sonnet", "c3": "h:ffff0000:sonnet"})
+    hook.admission.recent.update({"c1": "pinned", "c2": "pinned", "c3": "pinned"})
+    assert headers("c1") == {"x-mtplx-request-id": "c1", "x-mtplx-session-id": "h-8b07a98c-sonnet"}
+    assert headers("c1")["x-mtplx-session-id"] == "h-8b07a98c-sonnet"  # the /v1/messages bridge's second pass
+    assert hook.admission.recent["c1"] == "pinned; sess=h-8b07a98c-sonnet"  # echoed once in x-ultron-route
+    inflight["sonnet"] = ["c1"]  # c1 still running: mtplx would 409 a second request on the session
+    assert headers("c2") == {"x-mtplx-request-id": "c2"} and hook.admission.recent["c2"] == "pinned; sess=anon(busy)"
+    assert headers("c3")["x-mtplx-session-id"] == "h-ffff0000-sonnet"  # another conversation is unaffected
+    inflight["sonnet"] = []
+    assert headers("c2")["x-mtplx-session-id"] == "h-8b07a98c-sonnet"  # c1 done: the next turn takes it
+    assert "x-mtplx-session-id" not in headers("c4", msgs=turn[:1], tools=None)  # one-shot: bank bypass, no session
+    assert "x-mtplx-session-id" in headers("c5", model="hosted_vllm/opus")  # no admission key: hashed fallback
+    assert headers("c6", model="hosted_vllm/fable") == {} and headers("c7", model="hosted_vllm/judge") == {}
+
+
+def test_admission_rows_carry_the_harness_call_id_and_memory(adm):
+    adm.fake = st(sonnet=(0, 0), haiku=(0, 0))
+    adm.fake["mem"] = {"headroom": 8 * 2**30, "swap_used": 5 * 2**30, "compressor": 6 * 2**30}
+    d = req(model="claude-sonnet-4-6", session=None, cid="h1")
+    d["proxy_server_request"]["headers"]["X-Harness-Call-Id"] = "72bb2dc9"
+    d["reasoning_effort"] = "low"
+    out = run(adm.admit(d, "acompletion", "enforce"))
+    assert out["harness_call_id"] == "72bb2dc9" and out["effort"] == "low" and out["admit_s"] >= 0
+    assert (out["headroom_gb"], out["swap_gb"], out["compressor_gb"]) == (8.0, 5.0, 6.0)
+    refused = adm.note_refusal(d, Exception("507: insufficient memory for prefill"))
+    assert refused["harness_call_id"] == "72bb2dc9"
+
+
+def test_x_ultron_injected_names_the_stages_that_wrote_the_reply():
+    hook = ua.UltronAdmit()
+    headers = lambda data, response: asyncio.run(hook.async_post_call_response_headers_hook(data, None, response))
+    chat = lambda text: {"choices": [{"message": {"role": "assistant", "content": text}}]}
+    assert headers({"litellm_call_id": "c0"}, chat("All done, tests pass.")) is None
+    for text in ("[Compressed m00002–m00116 → 1 block(s), ~67962 tokens saved.]\nNo compressible ranges remain",
+                 "[Compression FAILED: the call's arguments (9594 chars) were not parseable JSON",
+                 "📦 [ACP] folded 3 ranges", "m00001–m00001\nThe quick brown fox",
+                 "[acp-proxy: compress call had no valid ranges; nothing compressed]"):
+        assert headers({"litellm_call_id": "c1"}, chat(text)) is None, text
+    anthropic = {"content": [{"type": "text", "text": "❌ [ACP] compress failed"}], "stop_reason": "end_turn"}
+    assert headers({}, anthropic) is None
+    for cid, mock, stage in (("c2", "[ultron loop-breaker] Stopped this turn: …", "loop-breaker"),
+                             ("c3", "Here's your image: /media/x.png", "media")):
+        data = {"model": "ultron/sonnet", "messages": [{"role": "user", "content": "go"}], "litellm_call_id": cid,
+                "mock_response": mock}
+        asyncio.run(hook.async_pre_call_hook(None, None, data, "acompletion"))
+        hook.admission.recent[cid] = "x"
+        assert headers(data, chat(mock)) == {"x-ultron-route": "x", "x-ultron-injected": stage}
+    assert headers({"ultron_rescued": True}, chat("")) == {"x-ultron-injected": "rescue"}
+    assert headers({}, None) is None  # streaming: no body to look at
 
 
 def test_explicit_cloud_request_keeps_its_conversation_key():
-    # bili's x-acp-session comes from admission's key; a client that asks for cloud/<tier> itself gets one too
-    t = ua.tiers()
-    tier = next(n for n in t.routed() if t.tier[n]["cloud"])
+    # admission's conversation key is stable; a client that asks for cloud/<tier> itself gets one too
     hook = ua.UltronAdmit()
-    data = {"model": f"cloud/{tier}", "messages": [{"role": "user", "content": "go"}], "litellm_call_id": "cid-9"}
+    data = {"model": "cloud/sonnet", "messages": [{"role": "user", "content": "go"}], "litellm_call_id": "cid-9"}
     assert asyncio.run(hook.admission.admit(data, "acompletion", "shadow")) is None
-    assert hook.admission.keys["cid-9"] == ua.pin_identity(data, tier)["key"]
+    assert hook.admission.keys["cid-9"] == ua.pin_identity(data, "sonnet")["key"]
 
 
-def test_bili_session_is_a_safe_filename():
-    assert ua.bili_session("cc:abc/def:main") == "cc-abc-def-main"
-    assert len(ua.bili_session("x" * 500)) == 120
+def test_mcp_tool_call_skips_admission(monkeypatch):
+    # LiteLLM's /mcp runs pre-call hooks on a synthetic request (model mcp-tool-call); tier_for() says sonnet
+    hook = ua.UltronAdmit()
+    called = []
+    async def admit(*a, **k):
+        called.append(a)
+    monkeypatch.setattr(hook.admission, "admit", admit)
+    monkeypatch.setattr(ua, "admit_mode", lambda: "enforce")
+    data = {"model": "mcp-tool-call", "messages": [{"role": "user", "content": "Tool: search\nArguments: {}"}],
+            "mcp_tool_name": "search"}
+    assert asyncio.run(hook.async_pre_call_hook(None, None, dict(data), "call_mcp_tool")) == data
+    assert called == []
+    asyncio.run(hook.async_pre_call_hook(None, None, dict(data), "acompletion"))
+    assert len(called) == 1
 
 
-def test_bili_config_block_follows_tiers():
-    import ultron_tiers
-    t = ultron_tiers.Tiers("[routing]\n[big]\ncontext = 200000\ntimeout = 2400\ncloud = vendor/big-1\n"
-                           "[judge]\nrouted = no\n[small]\ncloud = vendor/small-1\n")
-    cfg = json.loads("{" + ultron_tiers.blocks(t, cloud_base="https://cloud.example.com/v1/")["__TIERS_BILI__"].rstrip(",") + "}")
-    assert cfg["network"] == {"upstreamTimeoutMs": 2400000}  # the longest tier timeout, at least 1800 s
-    assert cfg["providers"] == {
-        "http://127.0.0.1:8001": {"models": {"big": {"context": 200000}, "small": {"context": 131072}}},
-        "https://cloud.example.com": {"models": {"vendor/big-1": {"context": 200000}, "vendor/small-1": {"context": 131072}}},
-    }
-    assert "cloud.example" not in ultron_tiers.blocks(t)["__TIERS_BILI__"]  # no OMNIROUTE_BASE: local only
+def test_sonnet_effort_is_capped_at_high(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
+    local = "http://127.0.0.1:8001/v1"
+    for cid, model, effort, want in (("k1", "hosted_vllm/sonnet", "xhigh", "high"), ("k2", "hosted_vllm/sonnet", "high", "high"),
+                                     ("k3", "hosted_vllm/sonnet", "medium", "medium"), ("k4", "hosted_vllm/opus", "xhigh", "xhigh")):
+        hook.admission.recent[cid] = "pinned"
+        kwargs = {"model": model, "api_base": local, "litellm_call_id": cid, "reasoning_effort": effort,
+                  "messages": [{"role": "user", "content": "go"}]}
+        out = asyncio.run(hook.async_pre_call_deployment_hook(kwargs, None))
+        assert (out or kwargs)["reasoning_effort"] == want, cid
+        assert f"; effort={want}/" in hook.admission.recent[cid], cid

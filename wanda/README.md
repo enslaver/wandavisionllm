@@ -21,7 +21,9 @@ Wanda 127.0.0.1:8790 behind Caddy :443 / :80
   LiteLLM → local tiers or cloud combos, over the last hour.
 - **Models** — per-model request stats from the `ultron_stats` hook, local and cloud.
 - **Controls & routing** — one switch per hook mode file in `~/.ultron` (Route, Admission, Loop
-  breaker, Media, Tool-call rescue, Compression), 1 h / 24 h routing, loop, media and rescue tiles, OmniRoute combo
+  breaker, Media, Tool-call rescue, Headroom = context compression, Memory = Hindsight), 1 h / 24 h routing, loop, media,
+  rescue and Headroom-savings tiles, a "Why cloud" tile (last hour's cloud requests by reason: memory guard,
+  refused, shed, backlog, route-mode, a cloud pin, plus local → cloud fallbacks), OmniRoute combo
   health, and lists of new conversations, OmniRoute calls, loop-breaker actions and media prompts
   (applied images link to `/media/<file>`). Loop entries logged in shadow mode count as
   "shadow-only", not stops.
@@ -32,11 +34,11 @@ Wanda 127.0.0.1:8790 behind Caddy :443 / :80
   them (`~/.mtplx/models/`) as packs. Empty until you use [`lora/`](../lora/README.md).
 - **Requests & events** — every completed request plus load / unload / mode-change events.
 - **Logs** — llama-swap, LiteLLM, Caddy, mode changes, OmniRoute calls, LOOPS, ADMIT, MEDIA,
-  RESCUE, REQUESTS (secrets masked).
+  RESCUE, MEMORY, HEADROOM, REQUESTS (secrets masked).
 - **Services** — links to everything else behind Caddy, from `services.json`, with health dots: an
   HTTP probe of `health` / `path` on `upstream` every 10 s, or, for an entry with
   `"launchd": "<label>"`, whether that LaunchAgent has a PID (for services that log every
-  connection, like bili).
+  connection).
 - **Bottom bar** — the whole stack at a glance; click a segment to jump to its section.
 
 Anything that changes state (Unload, a mode flip) needs a second press within 5 s.
@@ -76,8 +78,8 @@ Your own hub image: drop `ultron.png` / `.jpg` / `.webp` / `.svg` into `~/.wanda
 | `GET /api/status` | one sample (JSON) |
 | `GET /api/stream` | server-sent events, a `tick` every second |
 | `GET /api/history` | 15 minutes of samples per tier, plus events and requests |
-| `GET /api/log?name=swap\|litellm\|caddy\|modes\|omniroute\|loops\|admit\|media\|rescue\|stats` | log tail, secrets masked |
-| `POST /api/mode {key, value}` | set a hook mode (`route`, `admit`, `loops`, `media`, `rescue`, `bili`, `trace`) |
+| `GET /api/log?name=swap\|litellm\|caddy\|modes\|omniroute\|loops\|admit\|media\|rescue\|hindsight\|headroom\|stats` | log tail, secrets masked |
+| `POST /api/mode {key, value}` | set a hook mode (`route`, `admit`, `loops`, `media`, `rescue`, `headroom`, `hindsight`, `trace`) |
 | `POST /api/flag {key, value}` | set an on/off flag |
 | `POST /api/tier {tier, action: load\|unload}` | load or unload a tier through llama-swap |
 

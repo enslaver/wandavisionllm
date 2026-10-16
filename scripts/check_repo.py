@@ -5,7 +5,7 @@
   2. deploy.py render fills every placeholder
   3. rendered YAML parses (LiteLLM, llama-swap) and has the expected shape
   4. rendered plists parse
-  5. JSON examples parse; rendered bili/config.json is loopback-only and lists the routed tiers
+  5. JSON examples parse
   6. deployed Python imports only the standard library (plus litellm/yaml inside the hooks)
 
 Needs pyyaml. Exits non-zero on the first failing group, after printing every failure in it.
@@ -76,8 +76,9 @@ def check_yaml(out, deploy):
             fail(f"litellm/config.yaml: model_name {need} missing")
     callbacks = (cfg.get("litellm_settings") or {}).get("callbacks") or []
     order = [c.split(".")[0] for c in callbacks if "." in c]
-    if order[:5] != ["ultron_stats", "loop_breaker", "ultron_media", "ultron_admit", "ultron_rescue"]:
-        fail(f"litellm/config.yaml: hook order is {order}, expected stats, loop_breaker, media, admit, rescue")
+    want = ["ultron_stats", "loop_breaker", "ultron_media", "ultron_admit", "ultron_hindsight", "ultron_headroom", "ultron_rescue"]
+    if order[:7] != want:
+        fail(f"litellm/config.yaml: hook order is {order}, expected {', '.join(want)}")
     if (cfg.get("general_settings") or {}).get("master_key") != "os.environ/LITELLM_MASTER_KEY":
         fail("litellm/config.yaml: master_key must come from os.environ/LITELLM_MASTER_KEY")
     swap = yaml.safe_load(open(os.path.join(out, "llama-swap", "config.yaml")))
@@ -113,33 +114,6 @@ def check_json():
             fail(f"{p}: {e}")
 
 
-def check_bili(out, deploy):
-    """bili sits behind LiteLLM with no auth of its own: loopback only, never self-updating, and its
-    providers and timeout must follow tiers.conf (the routing is unit-tested in test_ultron_admit.py)."""
-    tiers = deploy.TIERS
-    try:
-        cfg = json.load(open(os.path.join(out, "bili", "config.json")))
-    except Exception as e:  # noqa: BLE001
-        fail(f"bili/config.json (rendered): {e}")
-        return
-    if cfg.get("host") != "127.0.0.1":
-        fail(f"bili/config.json: host is {cfg.get('host')!r}; bili's /bili/ proxy has no auth, keep it on 127.0.0.1")
-    for k in ("autoUpdate", "advisoryCheck", "releaseNotesCheck"):
-        if cfg.get(k) is not False:
-            fail(f"bili/config.json: {k} must be false")
-    local = ((cfg.get("providers") or {}).get("http://127.0.0.1:8001") or {}).get("models") or {}
-    if list(local) != tiers.routed():
-        fail(f"bili/config.json: llama-swap models are {list(local)}, routed tiers are {tiers.routed()}")
-    longest = max([tiers.tier[n]["timeout"] for n in tiers.routed()] + [0])
-    if ((cfg.get("network") or {}).get("upstreamTimeoutMs") or 0) < longest * 1000:
-        fail(f"bili/config.json: network.upstreamTimeoutMs is below the longest tier timeout ({longest} s)")
-    label = "com.billion-context.bili"
-    with open(os.path.join(out, "launchd", label + ".plist"), "rb") as fh:
-        pl = plistlib.load(fh)
-    if pl.get("Label") != label or not str(pl.get("ProgramArguments", [""])[-1]).endswith("/.bili/start.sh"):
-        fail(f"{label}.plist: Label or ProgramArguments don't match bili/start.sh")
-
-
 DEPLOYED_PY = {
     "deploy.py": {"ultron_tiers"},
     "wanda/server.py": set(),
@@ -148,6 +122,8 @@ DEPLOYED_PY = {
     "Vision/media/ultron_media.py": {"litellm", "loop_breaker", "ultron_tiers"},
     "litellm/ultron_stats.py": {"litellm", "yaml"},
     "litellm/ultron_rescue.py": {"litellm"},
+    "litellm/ultron_hindsight.py": {"litellm", "ultron_admit"},
+    "litellm/ultron_headroom.py": {"litellm", "headroom", "ultron_admit"},
     "litellm/ultron_tiers.py": set(),
     "gpu-box/deploy.py": set(),        # deployed on the GPU box
     "Vision/judge/rank.py": set(),     # a client; runs anywhere
@@ -193,7 +169,7 @@ def main():
     groups = [("components", lambda: check_components(deploy))]
     with tempfile.TemporaryDirectory() as out:
         groups += [("render", lambda: render(out)), ("yaml", lambda: check_yaml(out, deploy)),
-                   ("plists", lambda: check_plists(out)), ("json", check_json), ("bili", lambda: check_bili(out, deploy)),
+                   ("plists", lambda: check_plists(out)), ("json", check_json),
                    ("stdlib-only", check_stdlib_only), ("home paths", check_personal)]
         for name, fn in groups:
             before = len(FAILS)
