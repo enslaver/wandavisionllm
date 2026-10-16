@@ -819,6 +819,30 @@ def test_drop_empty_tool_calls():
     unknown = [{"role": "assistant", "content": "", "tool_calls": [_fn(1, "mcp__thing", "{}")]}]
     assert ua.drop_empty_tool_calls(unknown, schemas) is unknown  # undeclared name: cannot tell, leave it
 
+def test_empty_call_to_a_tool_with_only_optional_arguments_is_kept():
+    optional = [{"type": "function", "function": {"name": "search", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}}}}]
+    msgs = [{"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [_fn(1, "search", "{}")]},
+            {"role": "tool", "tool_call_id": "c1", "content": "3 hits"}]
+    assert ua.drop_empty_tool_calls(msgs, optional) is msgs
+
+
+def test_take_session_lets_only_one_of_two_racing_requests_claim_it(monkeypatch):
+    import threading
+    hook = ua.Admission()
+    monkeypatch.setattr(ua, "litellm_inflight", lambda: {"x": ["a"]})
+    hook.take_session("s", "a")
+    wins = []
+    ts = [threading.Thread(target=lambda c=c: wins.append(hook.take_session("s", c))) for c in ("b", "c", "d")]
+    [t.start() for t in ts]; [t.join() for t in ts]
+    assert wins == [False, False, False]  # "a" is still in flight: nobody else may use the session
+
+
+def test_unavailable_cloud_never_becomes_the_target(monkeypatch):
+    monkeypatch.setenv("OMNIROUTE_BASE", "")
+    assert not ua.cloud_for("sonnet")
+
+
 def test_deployment_hook_keeps_a_declared_zero_argument_call():
     hook = ua.UltronAdmit()
     msgs = [{"role": "user", "content": "go"},

@@ -19,7 +19,8 @@ All notable changes to this project are documented here. The format follows
   tokens, or while its disk saves are backed up; local-to-cloud fallback after the retries; a tier-lock file
   pins routing during a swap; `x-ultron-injected` response header.
 - Drops tool calls with empty arguments from history when the request's tool schemas require arguments.
-- `litellm/bench.py` tier benchmark; Wanda tiles for why requests went to the cloud.
+- `litellm/bench.py` tier benchmark (its coding section runs model-generated code unsandboxed and needs
+  `--allow-generated-code`); Wanda tiles for why requests went to the cloud.
 - Media hook tries a local ComfyUI first (`ULTRON_COMFY_URL`); optional Decisions API pass-through and a
   decide server for the image judge (`Vision/judge/serve_decide_mlx.py`).
 

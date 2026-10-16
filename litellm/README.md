@@ -213,7 +213,7 @@ the window kept for thinking and the answer. A request that sets no sampling fie
 Some servers emit tool calls with `arguments: "{}"`. The client rejects them, and a history holding many of
 those pairs makes the model imitate them. Before each local request, assistant tool calls with no arguments
 are dropped together with their results, but only when the request's `tools` declare that tool with required
-arguments or properties (zero-argument tools stay). With no `tools` in the request every empty call goes.
+arguments (tools with only optional arguments stay). With no `tools` in the request every empty call goes.
 
 ### Helper models: routed = no (the image judge)
 

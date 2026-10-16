@@ -347,6 +347,8 @@ def note_text(v: Verdict) -> str:
     tools = ", ".join(dict.fromkeys(v.tools))
     if "cycle" in v.rule:
         what = f"You have repeated the same cycle of calls ({tools}) {v.run} times and every result came back unchanged."
+    elif v.rule == "recur":
+        what = f"You have called `{tools}` with the same arguments {v.run} times in your last {RECUR_WINDOW} calls, between other calls."
     elif v.rule == "error":
         what = f"You have called `{tools}` with the same arguments {v.run} times in a row and it failed the same way every time."
     else:

@@ -368,6 +368,25 @@ def _comfy_run(workflow: str, prompt: str, edit_input: str | None, timeout: floa
         g["76"]["inputs"]["image"] = edit_input
     pid = json.loads(_comfy_http(base + "/prompt", json.dumps(
         {"prompt": g, "client_id": uuid.uuid4().hex}).encode(), "application/json"))["prompt_id"]
+    try:
+        return _comfy_wait(base, pid, timeout)
+    except Exception:
+        _comfy_cancel(base, pid)  # the caller overflows to the cloud: don't leave this job eating GPU time
+        raise
+
+
+def _comfy_cancel(base: str, pid: str) -> None:
+    """Best effort: drop this request's job from the queue, and interrupt it if it is the one running."""
+    try:
+        _comfy_http(base + "/queue", json.dumps({"delete": [pid]}).encode(), "application/json", timeout=5)
+        running = json.loads(_comfy_http(base + "/queue", timeout=5)).get("queue_running") or []
+        if any(len(x) > 1 and x[1] == pid for x in running):
+            _comfy_http(base + "/interrupt", json.dumps({"prompt_id": pid}).encode(), "application/json", timeout=5)
+    except Exception:
+        pass
+
+
+def _comfy_wait(base: str, pid: str, timeout: float) -> bytes:
     end = time.time() + timeout
     while time.time() < end:
         h = json.loads(_comfy_http(base + "/history/" + pid)).get(pid)
