@@ -843,6 +843,18 @@ def test_take_session_counts_a_fresh_claim_before_the_stats_file_lists_it(monkey
     monkeypatch.setattr(ua, "litellm_inflight", lambda: {})
     assert hook.take_session("s", "b") and not hook.take_session("s", "c")  # b claimed it a moment ago
     assert hook.take_session("s", "b")  # the owner itself may reuse it
+    hook.release_session("b")  # b finished: the next turn takes the session at once
+    assert hook.take_session("s", "c")
+
+
+def test_a_finished_request_releases_its_session_claim():
+    hook = ua.UltronAdmit()
+    hook.admission._session_claimed["x"] = 1e18
+    asyncio.run(hook.async_log_success_event({"litellm_call_id": "x"}, None, 0, 0))
+    assert "x" not in hook.admission._session_claimed
+    hook.admission._session_claimed["y"] = 1e18
+    asyncio.run(hook.async_log_failure_event({"litellm_call_id": "y"}, None, 0, 0))
+    assert "y" not in hook.admission._session_claimed
 
 
 def test_unavailable_cloud_never_becomes_the_target(monkeypatch):

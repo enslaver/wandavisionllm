@@ -687,6 +687,11 @@ class Admission:
         self._sessions_lock = threading.Lock()  # take_session runs on worker threads
         self._session_claimed: dict[str, float] = {}  # litellm_call_id -> when it took a session (not yet in the in-flight file)
 
+    def release_session(self, cid: str) -> None:
+        """The request finished: its claim no longer holds the session (the next turn may take it at once)."""
+        with self._sessions_lock:
+            self._session_claimed.pop(cid, None)
+
     def take_session(self, session: str, cid: str) -> bool:
         """Whether this request may use the conversation's named mtplx session. mtplx answers 409 to a second
         request in flight on one named session, so while another request of the conversation is still in
@@ -1116,6 +1121,20 @@ class UltronAdmit(CustomLogger):  # type: ignore[misc,valid-type]
             except Exception as exc:  # never fail a request because of routing bookkeeping
                 _log({"ts": time.time(), "error": repr(exc), "model": data.get("model")})
         return data
+
+    async def async_log_success_event(self, kwargs, response_obj, start_time, end_time):
+        self._release(kwargs)
+
+    async def async_log_failure_event(self, kwargs, response_obj, start_time, end_time):
+        self._release(kwargs)
+
+    def _release(self, kwargs) -> None:
+        try:
+            cid = (kwargs or {}).get("litellm_call_id")
+            if cid:
+                self.admission.release_session(cid)
+        except Exception as exc:
+            _log({"ts": time.time(), "error": "release: " + repr(exc)})
 
     async def async_post_call_failure_hook(self, request_data, original_exception, user_api_key_dict,
                                            traceback_str=None):
