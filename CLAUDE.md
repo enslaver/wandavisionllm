@@ -10,7 +10,7 @@ component's reload step. Nothing is edited on the Mac directly.
 
 ```
 LiteLLM 0.0.0.0:4000 (hooks: ultron_stats, loop_breaker, ultron_media, ultron_admit, ultron_rescue, optional ultron_hindsight + ultron_headroom, prometheus)
-  -> llama-swap 127.0.0.1:8001 -> tiers from litellm/tiers.conf (example: fable on Splash; opus, sonnet, haiku on mtplx;
+  -> llama-swap 127.0.0.1:8001 -> tiers from litellm/tiers.conf (example: opus, sonnet on Splash; haiku on mtplx; fable cloud only, `local = no`;
      judge, routed = no, on mlx_vlm.server) on 127.0.0.1:18001+
   -> cloud/* overflow: OmniRoute (optional; local -> cloud only, never back)
 Wanda 127.0.0.1:8790 behind Caddy :443/:80 — the dashboard

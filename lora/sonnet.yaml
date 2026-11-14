@@ -1,8 +1,13 @@
-# mlx_lm.lora config — QLoRA on the served sonnet weights (Qwen3.5-9B, 4-bit g64).
-#   ~/lora/.venv/bin/python train.py --config sonnet.yaml --model ~/lora/base/sonnet-4bit \
+# mlx_lm.lora config — QLoRA on the sonnet tier's model: Swift 1.5 Qwen3.8-27B (ukisai).
+#   ./prep_swift_base.sh                      # once: BF16 download (55 GB) -> 4-bit MLX base (~15 GB)
+#   ~/lora/.venv/bin/python train.py --config sonnet.yaml --model ~/lora/base/sonnet-swift-1.5-27b-4bit \
 #     --data ~/lora/data/v1 --adapter-path ~/lora/runs/v1 [--iters N]
-# model: text-only view of the MTPLX pack (symlinks, see README); vision tower and MTP head stay as they are.
+# The tier serves a GGUF (IQ3_XXS + MTP head) on Splash, which has no adapter flag, so this trains on the BF16
+# checkpoint requantized to 4-bit MLX. The base is NOT the served file: see README "Sonnet on Swift" for how
+# an adapter gets back into the tier. Text only, like the tier (--language-only).
+# Memory: 4-bit weights ~15 GB + activations at 8k tokens: unload opus first.
 # Paths come from the command line: mlx_lm doesn't expand ~ in this file.
+# The Qwen3.5-9B config for the mtplx sonnet alternate is sonnet-qwen35-9b.yaml.
 train: true
 fine_tune_type: lora
 
@@ -12,12 +17,12 @@ mask_prompt: true             # loss on the chosen turn only (its <think> and to
 optimizer: adamw
 batch_size: 1
 grad_accumulation_steps: 4
-iters: 200                    # ~80 examples -> ~2.5 epochs at an effective batch of 4
-learning_rate: 2e-5
+iters: 150
+learning_rate: 1e-5           # 27B: half the 9B's 2e-5
 seed: 0
 grad_checkpoint: true
 
-num_layers: -1                # all 32 blocks
+num_layers: 24                # top 24 of 64 blocks: bounds optimizer and activation memory on a 64 GB box
 lora_parameters:
   rank: 16
   dropout: 0.05

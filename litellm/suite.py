@@ -34,7 +34,7 @@ Notes:
   - Local baselines force the tier with `x-route: private`, so each baseline evicts the previous
     tier. Run baseline last if you care about which tier stays resident.
   - vision and baseline send `X-Claude-Code-Agent-Id: suite`, so their pins are subagent pins. A main
-    pin makes its tier "warm" for 5 min, and in local-only mode the next fable<->opus swap then waits
+    pin makes its tier "warm" for 5 min, and in local-only mode the next swap between big tiers then waits
     up to 300 s for it (baseline once stalled ~150 s twice behind the suite's own requests).
   - Pure stdlib (Python 3.9), matching the deployed-hook convention. Not deployed.
 """
@@ -372,13 +372,6 @@ DECISION_SCENARIOS = [
     ("route-mode cloud-only", "haiku", {"haiku": ("ready", 0, 0)}, set(), "", "cloud-only", ("cloud/haiku", "route-mode:cloud-only")),
     ("private beats cloud-only", "haiku", {"haiku": ("ready", 0, 0)}, set(), "private", "cloud-only", ("ultron/haiku", "1:loaded")),
 ]
-# With the example fable tier (resident = (fable | opus) & sonnet & haiku); skipped when tiers.conf has no fable.
-FABLE_SCENARIOS = [
-    ("fable cold-fits beside sonnet + haiku", "fable", {"sonnet": ("ready", 0, 0), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("ultron/fable", "2:cold-fits")),
-    ("fable never shares the box with opus", "fable", {"opus": ("ready", 0, 0), "sonnet": ("ready", 0, 0), "haiku": ("ready", 0, 0)}, set(), "", "auto", ("cloud/fable", "4:overflow:no-fit")),
-    ("private fable swaps opus out", "fable", {"opus": ("ready", 0, 0), "sonnet": ("ready", 0, 0), "haiku": ("ready", 0, 0)}, set(), "private", "auto", ("ultron/fable", "5:local-swap")),
-]
-
 
 def cmd_swap(args):
     section("swap: decision table against the live matrix + pins (dry)")
@@ -392,8 +385,10 @@ def cmd_swap(args):
     print(f"  main pins (enforce): local={sorted(pins.main_local_tiers('enforce'))} "
           f"warm={sorted(pins.warm_main_tiers('enforce', now))}")
 
-    fable = "fable" in ua.tiers().names
-    for name, tier, tstate, reserved, xr, mode, exp in DECISION_SCENARIOS + (FABLE_SCENARIOS if fable else []):
+    t = ua.tiers()
+    for name, tier, tstate, reserved, xr, mode, exp in DECISION_SCENARIOS:
+        if tier not in t.local_names() or not all(x in t.local_names() for x in tstate):
+            continue  # the scenarios use the example opus / sonnet / haiku
         st = {"tiers": {t: {"state": s, "active": a, "waiting": w} for t, (s, a, w) in tstate.items()},
               "pressure": 2 if name.startswith("memory pressure") else 1}
         got = ua.decide(tier, st, set(reserved), xr, mode, sets)
@@ -406,10 +401,10 @@ def cmd_swap(args):
     check("swap", "sonnet evicts nothing (3-resident)",
           ua.evictees("sonnet", {"opus", "haiku"}, sets, costs) == set(),
           f"{ua.evictees('sonnet', {'opus', 'haiku'}, sets, costs)}")
-    if fable:
-        check("swap", "fable evicts only opus",
-              ua.evictees("fable", {"opus", "sonnet", "haiku"}, sets, costs) == {"opus"},
-              f"{ua.evictees('fable', {'opus', 'sonnet', 'haiku'}, sets, costs)}")
+    for name in t.cloud_only():  # local = no: answered by its cloud model, never admitted or loaded
+        check("swap", f"{name} is cloud only: not admitted, not in the matrix",
+              all(t.tier_for(m) is None for m in (name, f"ultron/{name}", *t.tier[name]["advertise"]))
+              and not any(name in x for x in sets), f"sets {sets}")
 
     if args.live:
         cmd_swap_live(args)
@@ -492,7 +487,12 @@ def cmd_vision(args):
 
     # every tier from tiers.conf: a vision tier keeps the image and sees it; a no-vision tier reroutes
     # that request to [routing] vision, which sees it. x-route: private keeps both local.
+    if not vt:
+        check("vision", "a vision tier is configured ([routing] vision)", True, "none: skipped (example tiers are text only)")
+        return 0
     for name in t.routed():  # not the routed = no models (the judge answers in its own rubric)
+        if not t.tier[name]["local"]:
+            continue  # cloud-only: no local model to route an image to
         model = (t.tier[name]["advertise"] or [f"ultron/{name}"])[0]
         want = f"ultron/{vt}" if name in blind else f"ultron/{name}"
         session = f"suite-vis-{name}-" + uuid.uuid4().hex[:8]

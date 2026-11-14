@@ -21,10 +21,16 @@ COLORS = ["#c39bd3", "#88c0d0", "#a3be8c", "#ebcb8b", "#d08770", "#b48ead", "#8f
 
 TIER_KEYS = {"script", "ttl", "preload", "evict_cost", "context", "vision", "chat_only", "think_in_content",
              "reasoning_content", "reasoning_effort", "effort", "effort_cap", "max_output_tokens", "check_endpoint",
-             "timeout", "upstream_model", "max_waiting", "substitute", "match", "advertise", "cloud", "color", "routed"}
+             "timeout", "upstream_model", "max_waiting", "substitute", "match", "advertise", "cloud", "color", "routed",
+             "local"}
 # routed = no: a model llama-swap serves next to the tiers (the image judge) that is only ever asked
 # for by name (ultron/<name>). These keys would route requests to it, so they're refused there.
 ROUTING_ONLY_KEYS = ("substitute", "match", "advertise", "cloud")
+# local = no: a tier with no local model at all. Its ids (ultron/<name>, the bare name, advertise, match)
+# are answered by its `cloud` model; llama-swap never starts anything for it. These keys only make
+# sense for a model llama-swap runs, so they're refused there.
+CLOUD_ONLY_REFUSED_KEYS = ("script", "ttl", "preload", "evict_cost", "check_endpoint", "upstream_model",
+                           "substitute", "max_waiting")
 EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
 ROUTING_KEYS = {"default", "resident", "vision", "helper"}
 NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
@@ -50,6 +56,7 @@ class Tiers:
         cp.read_string(text)
         self.problems: list[str] = []
         self.names = [s for s in cp.sections() if s != "routing"]
+        self._raw = {n: list(cp[n]) for n in self.names}   # keys as written, to refuse some next to local = no
         self.tier: dict[str, dict[str, Any]] = {}
         for i, name in enumerate(self.names):
             s = cp[name]
@@ -84,6 +91,7 @@ class Tiers:
                     "cloud": (s.get("cloud") or "").strip() or None,
                     "color": (s.get("color") or "").strip() or COLORS[i % len(COLORS)],
                     "routed": _bool(s.get("routed"), True),
+                    "local": _bool(s.get("local"), True),
                 }
             except ValueError as e:
                 self.problems.append(f"[{name}]: {e}")
@@ -91,9 +99,9 @@ class Tiers:
         for k in r:
             if k not in ROUTING_KEYS:
                 self.problems.append(f"[routing] {k}: unknown key")
-        routed = self.routed()
+        routed = [n for n in self.routed() if self.tier[n]["local"]]   # the tiers a request can run on locally
         self.default = (r.get("default") or "").strip() or (routed[0] if routed else None)
-        self.resident = (r.get("resident") or "").strip() or " | ".join(self.names)
+        self.resident = (r.get("resident") or "").strip() or " | ".join(self.local_names())
         self.vision_tier = ((r.get("vision") or "").strip()
                             or next((n for n in routed if self.tier[n]["vision"]), None))
         self.helper = (r.get("helper") or "").strip() or (routed[-1] if routed else None)
@@ -109,18 +117,36 @@ class Tiers:
                 self.problems.append(f"[routing] {what} = {v}: no such tier")
             elif v and not self.tier.get(v, {}).get("routed", True):
                 self.problems.append(f"[routing] {what} = {v}: that tier has routed = no")
+            elif v and not self.tier[v]["local"]:
+                self.problems.append(f"[routing] {what} = {v}: that tier has local = no (cloud only)")
         for n, t in self.tier.items():
             if not t["routed"]:
                 for k in ROUTING_ONLY_KEYS:
                     if t[k]:
                         self.problems.append(f"[{n}] {k}: not allowed with routed = no")
         for n, t in self.tier.items():
+            if not t["local"]:
+                if not t["routed"]:
+                    self.problems.append(f"[{n}] local = no: not allowed with routed = no")
+                if not t["cloud"]:
+                    self.problems.append(f"[{n}] local = no: needs a cloud = <model id> to answer with")
+        raw = {n: set(self._raw.get(n, ())) for n in self.names}
+        for n, t in self.tier.items():
+            if not t["local"]:
+                for k in CLOUD_ONLY_REFUSED_KEYS:
+                    if k in raw[n]:
+                        self.problems.append(f"[{n}] {k}: not allowed with local = no")
+        for n, t in self.tier.items():
             if t["effort_cap"] and t["effort_cap"] not in EFFORT_LEVELS:
                 self.problems.append(f"[{n}] effort_cap = {t['effort_cap']}: one of {', '.join(EFFORT_LEVELS)}")
         for atom in re.findall(r"[A-Za-z0-9._/-]+", self.resident):
             if atom not in known:
                 self.problems.append(f"[routing] resident: {atom} is not a tier")
+            elif not self.tier[atom]["local"]:
+                self.problems.append(f"[routing] resident: {atom} has local = no (cloud only)")
         for n, t in self.tier.items():
+            if t["substitute"] and t["substitute"] in self.tier and not self.tier[t["substitute"]]["local"]:
+                self.problems.append(f"[{n}] substitute = {t['substitute']}: that tier has local = no")
             if t["substitute"] and t["substitute"] not in known:
                 self.problems.append(f"[{n}] substitute = {t['substitute']}: no such tier")
             elif t["substitute"] and not self.tier.get(t["substitute"], {}).get("routed", True):
@@ -137,23 +163,32 @@ class Tiers:
     # ------------------------------------------------------------------ lookups used by the hooks
 
     def tier_for(self, model: str) -> str | None:
-        """Tier for a requested model id; None for an explicit cloud/<tier> (the client chose)."""
+        """Tier for a requested model id; None for an explicit cloud/<tier> (the client chose) and for
+        a cloud-only tier's ids (local = no): there is nothing local to admit, LiteLLM sends them to its cloud model."""
         m = (model or "").lower()
         if m.startswith("cloud/"):
             return None
         for n, t in self.tier.items():
             if m in (f"ultron/{n}", n) or m in (a.lower() for a in t["advertise"]):
-                return n
+                return n if t["local"] else None
         globs = [(g, n) for n, t in self.tier.items() for g in t["match"]]
         globs.sort(key=lambda gn: -len(gn[0].replace("*", "").replace("?", "")))  # most specific wins
         for g, n in globs:
             if fnmatch.fnmatchcase(m, g):
-                return n
+                return n if self.tier[n]["local"] else None
         return self.default
 
     def routed(self) -> list[str]:
         """Tiers requests can be routed to (every tier but those with routed = no), in file order."""
         return [n for n in self.names if self.tier.get(n, {}).get("routed", True)]
+
+    def cloud_only(self) -> list[str]:
+        """Tiers with local = no: answered by their cloud model only, never loaded by llama-swap."""
+        return [n for n in self.names if not self.tier.get(n, {}).get("local", True)]
+
+    def local_names(self) -> list[str]:
+        """Tiers llama-swap can run (everything but cloud-only tiers), in file order."""
+        return [n for n in self.names if self.tier.get(n, {}).get("local", True)]
 
     def no_vision(self) -> list[str]:
         return [n for n, t in self.tier.items() if not t["vision"]]
@@ -212,22 +247,41 @@ def _local_entry(model_name: str, t: dict[str, Any]) -> list[str]:
     return out
 
 
+def _cloud_entry(model_name: str, t: dict[str, Any]) -> list[str]:
+    """A tier with local = no: every id of the tier is answered by its cloud model."""
+    c = t["cloud"]
+    return [f"- model_name: {_q(model_name)}",
+            "  litellm_params:",
+            f"    model: {_q('openai/' + c)}   # cloud only (local = no): OpenAI-compatible endpoint, OMNIROUTE_BASE in ~/.litellm/env",
+            '    api_base: "os.environ/OMNIROUTE_BASE"',
+            '    api_key: "os.environ/OMNIROUTE_KEY"',
+            "    cache_control_injection_points: [{location: message, role: system}]   # see litellm_settings",
+            "  model_info:",
+            f"    max_input_tokens: {t['context']}",
+            *([f"    max_output_tokens: {t['max_output_tokens']}"] if t["max_output_tokens"] else []),
+            f"    description: {_q('cloud-only ' + t['name'] + ' tier (' + c + ')')}"]
+
+
+def _entry(model_name: str, t: dict[str, Any]) -> list[str]:
+    return _local_entry(model_name, t) if t["local"] else _cloud_entry(model_name, t)
+
+
 def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
     """Generated config blocks, keyed by the placeholder that marks where each goes."""
     names = t.names
     lm: list[str] = ["# --- local tiers, advertised in /v1/models ---"]
     for n in names:
-        lm += _local_entry(f"ultron/{n}", t.tier[n])
+        lm += _entry(f"ultron/{n}", t.tier[n])
     for n in names:
         for mid in t.tier[n]["advertise"]:
-            lm += _local_entry(mid, t.tier[n])
+            lm += _entry(mid, t.tier[n])
     globs = sorted(((g, n) for n in names for g in t.tier[n]["match"]),
                    key=lambda gn: -len(gn[0].replace("*", "").replace("?", "")))  # most specific first
     if globs:
         lm.append("# --- wildcards (never listed): other ids of the same family ---")
         for g, n in globs:
-            lm += _local_entry(g, t.tier[n])
-    clouds = [n for n in names if t.tier[n]["cloud"]]
+            lm += _entry(g, t.tier[n])
+    clouds = [n for n in names if t.tier[n]["cloud"] and t.tier[n]["local"]]   # overflow twins; cloud-only tiers are answered by their cloud model directly
     if clouds:
         lm.append("# --- cloud overflow: any OpenAI-compatible endpoint (OMNIROUTE_BASE in ~/.litellm/env) ---")
         for n in clouds:
@@ -252,14 +306,15 @@ def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
         fb = ["fallbacks: []   # no tier has a cloud overflow"]
     alias = ["model_group_alias:   # bare tier names keep working, not listed in /v1/models"]
     alias += [f"  {n}: {{model: \"ultron/{n}\", hidden: true}}" for n in names]
-    slow = [n for n in names if t.tier[n]["timeout"]]
+    slow = [n for n in t.local_names() if t.tier[n]["timeout"]]
     retry = (["model_group_retry_policy:   # no retry after a timeout: the local server keeps working on the "
               "abandoned request, and a retry queues behind it"]
              + [f"  {_q(g)}: {{TimeoutErrorRetries: 0}}"
                 for n in slow for g in [f"ultron/{n}", *t.tier[n]["advertise"], n]]) if slow else []
 
+    local = t.local_names()
     sw: list[str] = ["models:"]
-    for n in names:
+    for n in local:
         x = t.tier[n]
         sw += [f"  {n}:",
                f"    cmd: {home}/.mtplx/bin/{x['script']} ${{PORT}}",
@@ -270,9 +325,9 @@ def blocks(t: Tiers, home: str = "__HOME__") -> dict[str, str]:
             um = x["upstream_model"]
             um = home + um[1:] if um.startswith("~/") else um  # a model path (mlx_vlm.server loads what the request names)
             sw.append(f"    useModelName: {_q(um)}   # the name the server answers to")
-    pre = [n for n in names if t.tier[n]["preload"]]
+    pre = [n for n in local if t.tier[n]["preload"]]
     hooks = ["hooks:", "  on_startup:", f"    preload: [{', '.join(pre)}]"] if pre else []
-    costs = ", ".join(f"{n}: {t.tier[n]['evict_cost']:g}" for n in names)
+    costs = ", ".join(f"{n}: {t.tier[n]['evict_cost']:g}" for n in local)
     routing = ["routing:", "  router:", "    use: matrix", "    settings:", "      matrix:",
                f"        evict_costs: {{{costs}}}   # higher = llama-swap keeps it loaded longer",
                "        sets:",

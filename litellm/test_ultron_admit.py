@@ -32,8 +32,9 @@ def test_matrix_expansion_and_refs():
 
 def test_tier_globs():
     assert ua.tier_for("claude-opus-5-5") == "opus"
-    assert ua.tier_for("claude-fable-5-1") == "fable"
-    assert ua.tier_for("ultron/fable") == "fable" and ua.tier_for("fable") == "fable"
+    # a cloud-only tier (`local = no`): claude-fable-* are LiteLLM cloud entries, so admission skips them
+    assert ua.tier_for("claude-fable-5-1") is None
+    assert ua.tier_for("ultron/fable") is None and ua.tier_for("fable") is None
     assert ua.tier_for("ultron/haiku") == "haiku"
     assert ua.tier_for("claude-haiku-4-5-20251001") == "haiku"
     assert ua.tier_for("claude-sonnet-5") == "sonnet"
@@ -171,22 +172,26 @@ def test_media_models_are_not_tiers(adm):
     assert run(adm.admit(d, "image_generation", "enforce")) is None and d["model"] == "media/image"
 
 
-def test_vision_reroutes_to_sonnet(adm):
+def test_vision_reroutes_to_the_vision_tier(adm):
     img = [{"type": "text", "text": "what is this?"},
            {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "aGk="}}]
-    adm.fake = st(opus=(0, 0), sonnet=(0, 0), haiku=(0, 0))
-    # opus has no vision in the example tiers (text-only pack): a newest-turn image reroutes to sonnet, this request only
-    d = req(model="claude-opus-5-5", session="S2")
+    t = ua.tiers()
+    if not t.vision_tier:
+        return  # the example tiers.conf has no vision tier: images get the omitted note instead
+    vt, blind = t.vision_tier, next(n for n in t.routed() if n in t.no_vision())
+    adm.fake = st(**{n: (0, 0) for n in t.routed()})
+    # a text-only tier: a newest-turn image reroutes to the vision tier, this request only
+    d = req(model=f"claude-{blind}-5-5", session="S2")
     d["messages"] = [{"role": "user", "content": "look"}, {"role": "assistant", "content": "ok"},
                      {"role": "user", "content": [img[0], img[1]]}]
     run(adm.admit(d, "anthropic_messages", "enforce"))
-    assert d["model"] == "ultron/sonnet"
-    assert adm.recent["c1"].endswith("vision->sonnet")
-    # sonnet has a vision tower: an image stays on sonnet
-    s = req(model="claude-sonnet-5", session="S3", cid="c2")
+    assert d["model"] == f"ultron/{vt}"
+    assert adm.recent["c1"].endswith(f"vision->{vt}")
+    # the vision tier itself keeps the image
+    s = req(model=f"claude-{vt}-5", session="S3", cid="c2")
     s["messages"] = [{"role": "user", "content": [img[0], img[1]]}]
     run(adm.admit(s, "anthropic_messages", "enforce"))
-    assert s["model"] == "ultron/sonnet"
+    assert s["model"] == f"ultron/{vt}"
 
 
 def test_subagents_get_their_own_pins_and_do_not_reserve(adm):
@@ -670,7 +675,7 @@ def test_config_falls_back_from_each_local_tier_to_its_cloud_twin():
     t = ua.tiers()
     block = ultron_tiers.blocks(t)["__TIERS_FALLBACKS__"]
     fb = {k: v for d in yaml.safe_load(block)["fallbacks"] for k, v in d.items()}
-    assert fb == {f"ultron/{n}": [f"cloud/{n}"] for n in t.names if t.has_cloud(n)}
+    assert fb == {f"ultron/{n}": [f"cloud/{n}"] for n in t.local_names() if t.has_cloud(n)}
     assert fb and not any(k.startswith("cloud/") for k in fb)  # never cloud -> local
     cfg = open(os.path.join(os.path.dirname(__file__), "config.yaml")).read()
     assert "# __TIERS_FALLBACKS__" in cfg
@@ -738,11 +743,11 @@ def test_history_hook_only_for_local_tiers():
     run = lambda model, base: asyncio.run(hook.async_pre_call_deployment_hook(
         {"model": model, "api_base": base, "messages": list(msgs)}, None))["messages"]
     local = "http://127.0.0.1:8001/v1"
-    assert run("hosted_vllm/sonnet", local)[1]["content"].startswith("<think>\nr\n</think>")
-    assert run("hosted_vllm/haiku", local)[1]["content"].startswith("<think>")
-    assert run("hosted_vllm/opus", local)[1]["content"].startswith("<think>")  # Qwen3.6 reads <think> back too
-    fable = run("hosted_vllm/fable", local)  # think_in_content = no: Qwen3.8 reads only reasoning_content
-    assert fable[1]["content"] == "" and fable[2] == {"role": "user", "content": REM}
+    assert run("hosted_vllm/haiku", local)[1]["content"].startswith("<think>\nr\n</think>")
+    sonnet = run("hosted_vllm/sonnet", local)[1]  # reasoning_content = yes: the reasoning stays a field
+    assert sonnet["content"] == "" and sonnet["reasoning_content"] == "r"
+    opus = run("hosted_vllm/opus", local)  # Qwen3.8 reads only reasoning_content
+    assert opus[1]["content"] == "" and opus[1]["reasoning_content"] == "r" and opus[2] == {"role": "user", "content": REM}
     assert run("openai/anthropic/claude-sonnet-5.5", "https://omniroute.example.com/v1") == msgs
 
 
@@ -961,8 +966,14 @@ def test_trace_tap(tmp_path, monkeypatch):
     assert tr["messages"] == out["messages"] and tr["tools"] == tools and tr["tier"] == "sonnet"
     assert tr["messages"][2]["content"].endswith(REM)  # what the tier sees, after normalize_history
     run(tools=tools)  # no admission key -> hashed fallback
-    run()             # no tools -> no trace
+    run()             # short and no tools -> no trace
     assert len(list((tmp_path / "traces").iterdir())) == 2
+    msgs = [{"role": "user", "content": "text protocol"}] + [{"role": "assistant", "content": "a"}, {"role": "user", "content": "b"}] * 3  # no tools array, long
+    run()
+    assert len(list((tmp_path / "traces").iterdir())) == 3
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "history " * 8000}]  # 2 messages, 56k chars
+    run()
+    assert len(list((tmp_path / "traces").iterdir())) == 4
 
 
 def test_fill_array_items():
@@ -1003,17 +1014,14 @@ def test_pre_call_hook_fills_items_even_when_admit_off(monkeypatch):
     assert out["tools"][0]["input_schema"]["properties"]["x"]["items"] == {}
 
 
-def test_example_matrix_fable_swaps_only_opus():
+def test_example_matrix_has_one_deep_set():
     t = ua.tiers()
     sets = ua._expand(t.resident, {}, {})
     costs = {n: t.tier[n]["evict_cost"] for n in t.names}
-    assert set(sets) == {frozenset({"opus", "sonnet", "haiku"}), frozenset({"fable", "sonnet", "haiku"}),
-                         frozenset({"judge", "sonnet", "haiku"})}
+    assert set(sets) == {frozenset({"opus", "sonnet", "haiku"}), frozenset({"judge", "sonnet", "haiku"})}
     assert all({"sonnet", "haiku"} <= s for s in sets)  # always resident
-    assert ua.evictees("fable", {"opus", "sonnet", "haiku"}, sets, costs) == {"opus"}
-    assert ua.evictees("opus", {"fable", "sonnet", "haiku"}, sets, costs) == {"fable"}
-    assert ua.evictees("sonnet", {"fable", "haiku"}, sets, costs) == set()
     assert ua.evictees("opus", {"sonnet", "haiku"}, sets, costs) == set()
+    assert ua.evictees("sonnet", {"opus", "haiku"}, sets, costs) == set()
 
 
 # ----------------------------------------------------------------------------- memory gate (local only)
@@ -1137,7 +1145,7 @@ def test_upstream_model_renders_use_model_name():
 
 def test_example_haiku_is_text_only():
     t = ua.tiers()
-    assert "haiku" in t.no_vision() and t.vision_tier == "sonnet"
+    assert "haiku" in t.no_vision() and t.vision_tier not in t.no_vision()
 
 
 def test_routed_no_rules():
@@ -1161,9 +1169,12 @@ def test_cloud_entries_cache_and_never_fall_back():
     b = ultron_tiers.blocks(ua.tiers())
     fb = b["__TIERS_FALLBACKS__"]  # local -> cloud only, one entry per tier with a cloud twin
     assert not any('"cloud/' in line.split(":")[0] for line in fb.splitlines())
-    assert fb.count("[") == len([n for n in ua.tiers().names if ua.tiers().has_cloud(n)])
-    assert b["__TIERS_MODEL_LIST__"].count("cache_control_injection_points") == len(
-        [n for n in ua.tiers().names if ua.tiers().has_cloud(n)])
+    t = ua.tiers()
+    twins = [n for n in t.names if t.has_cloud(n) and n not in t.cloud_only()]
+    assert fb.count("[") == len(twins)
+    ml = b["__TIERS_MODEL_LIST__"]  # every entry that talks to the cloud injects the cache marker
+    assert ml.count("cache_control_injection_points") == ml.count("api_base: \"os.environ/OMNIROUTE_BASE\"")
+    assert all(f'"cloud/{n}"' in ml for n in twins)
 
 
 def test_chat_bridge_is_the_cloud_endpoint_only(monkeypatch):
@@ -1324,10 +1335,10 @@ def test_reasoning_effort_is_echoed_for_mtplx_tiers_and_max_becomes_xhigh(monkey
     monkeypatch.setattr(ua, "admit_mode", lambda: "off")
     hook = ua.UltronAdmit()
     local, cloud = "http://127.0.0.1:8001/v1", "https://omniroute.example.com/v1"
-    for cid, model, base, effort, want in (("c1", "hosted_vllm/opus", local, "max", "; effort=xhigh/32768"),
+    for cid, model, base, effort, want in (("c1", "hosted_vllm/haiku", local, "max", "; effort=xhigh/32768"),
                                            ("c2", "hosted_vllm/sonnet", local, "none", "; effort=none/1"),
                                            ("c3", "hosted_vllm/haiku", local, "bogus", ""),
-                                           ("c4", "hosted_vllm/fable", local, "high", "; effort=high/16384"),
+                                           ("c4", "hosted_vllm/opus", local, "high", "; effort=high/16384"),
                                            ("c5", "openai/custom-opus", cloud, "high", "")):
         data = {"model": "ultron/x", "messages": [{"role": "user", "content": "go"}], "litellm_call_id": cid,
                 "reasoning_effort": effort}
@@ -1356,20 +1367,20 @@ def test_fable_gets_thinking_budget_from_reasoning_effort_on_tensorfold(monkeypa
         assert (out or kwargs)["extra_body"]["x"] == 1  # the caller's own extra_body survives
 
 
-def test_fable_on_splash_gets_no_budget_but_sampling_defaults(monkeypatch):
+def test_opus_on_splash_gets_no_budget_but_sampling_defaults(monkeypatch):
     monkeypatch.setattr(ua, "admit_mode", lambda: "off")
     hook = ua.UltronAdmit()
     local = "http://127.0.0.1:8001/v1"
     base = {"api_base": local, "litellm_call_id": "s1", "messages": [{"role": "user", "content": "go"}]}
     hook.admission.recent["s1"] = "pinned"
-    out = asyncio.run(hook.async_pre_call_deployment_hook({**base, "model": "hosted_vllm/fable", "reasoning_effort": "high"}, None))
+    out = asyncio.run(hook.async_pre_call_deployment_hook({**base, "model": "hosted_vllm/opus", "reasoning_effort": "high"}, None))
     assert "thinking_budget" not in (out.get("extra_body") or {})  # Splash reads reasoning_effort natively
     assert out["temperature"] == 0.6 and out["max_tokens"] == 32768 and out["repetition_penalty"] == 1.1
     assert "effort=high/16384" in hook.admission.recent["s1"]
     out = asyncio.run(hook.async_pre_call_deployment_hook(
-        {**base, "model": "hosted_vllm/fable", "temperature": 1.0, "max_completion_tokens": 100}, None))
+        {**base, "model": "hosted_vllm/opus", "temperature": 1.0, "max_completion_tokens": 100}, None))
     assert out["temperature"] == 1.0 and "max_tokens" not in out  # the client's own values win
-    out = asyncio.run(hook.async_pre_call_deployment_hook({**base, "model": "hosted_vllm/opus"}, None))
+    out = asyncio.run(hook.async_pre_call_deployment_hook({**base, "model": "hosted_vllm/haiku"}, None))
     assert "temperature" not in out and "max_tokens" not in out and "repetition_penalty" not in out  # other tiers keep their own server defaults
 
 
@@ -1409,7 +1420,7 @@ def test_mtplx_tiers_get_a_named_session_per_conversation(monkeypatch):
     tools = [{"type": "function", "function": {"name": "Bash"}}]
     turn = [{"role": "user", "content": "go"}, {"role": "assistant", "content": "ok"}, {"role": "user", "content": "more"}]
 
-    def headers(cid, model="hosted_vllm/sonnet", msgs=turn, **kw):
+    def headers(cid, model="hosted_vllm/haiku", msgs=turn, **kw):
         out = asyncio.run(hook.async_pre_call_deployment_hook(
             {"model": model, "api_base": local, "litellm_call_id": cid, "messages": list(msgs), "tools": tools, **kw}, None))
         return out.get("extra_headers") or {}
@@ -1419,15 +1430,16 @@ def test_mtplx_tiers_get_a_named_session_per_conversation(monkeypatch):
     assert headers("c1") == {"x-mtplx-request-id": "c1", "x-mtplx-session-id": "h-8b07a98c-sonnet"}
     assert headers("c1")["x-mtplx-session-id"] == "h-8b07a98c-sonnet"  # the /v1/messages bridge's second pass
     assert hook.admission.recent["c1"] == "pinned; sess=h-8b07a98c-sonnet"  # echoed once in x-ultron-route
-    inflight["sonnet"] = ["c1"]  # c1 still running: mtplx would 409 a second request on the session
+    inflight["haiku"] = ["c1"]  # c1 still running: mtplx would 409 a second request on the session
     assert headers("c2") == {"x-mtplx-request-id": "c2"} and hook.admission.recent["c2"] == "pinned; sess=anon(busy)"
     assert headers("c3")["x-mtplx-session-id"] == "h-ffff0000-sonnet"  # another conversation is unaffected
-    inflight["sonnet"] = []
+    inflight["haiku"] = []
     hook.admission._session_claimed.clear()  # ...and its claim is older than the grace window
     assert headers("c2")["x-mtplx-session-id"] == "h-8b07a98c-sonnet"  # c1 done: the next turn takes it
     assert "x-mtplx-session-id" not in headers("c4", msgs=turn[:1], tools=None)  # one-shot: bank bypass, no session
-    assert "x-mtplx-session-id" in headers("c5", model="hosted_vllm/opus")  # no admission key: hashed fallback
-    assert headers("c6", model="hosted_vllm/fable") == {} and headers("c7", model="hosted_vllm/judge") == {}
+    assert "x-mtplx-session-id" in headers("c5", model="hosted_vllm/haiku")  # no admission key: hashed fallback
+    assert headers("c6", model="hosted_vllm/opus") == {} and headers("c7", model="hosted_vllm/judge") == {}
+    assert headers("c8", model="hosted_vllm/sonnet") == {}   # a reasoning_effort (Splash) tier: no mtplx session or request id
 
 
 def test_admission_rows_carry_the_harness_call_id_and_memory(adm):
@@ -1502,3 +1514,70 @@ def test_sonnet_effort_is_capped_at_high(monkeypatch):
         out = asyncio.run(hook.async_pre_call_deployment_hook(kwargs, None))
         assert (out or kwargs)["reasoning_effort"] == want, cid
         assert f"; effort={want}/" in hook.admission.recent[cid], cid
+
+
+def _deploy(hook, cid, model, **extra):
+    kwargs = {"model": model, "api_base": "http://127.0.0.1:8001/v1", "litellm_call_id": cid,
+              "messages": [{"role": "user", "content": "go"}], **extra}
+    hook.admission.recent[cid] = "pinned"
+    out = asyncio.run(hook.async_pre_call_deployment_hook(kwargs, None))
+    return out or kwargs
+
+
+def test_thinking_off_in_chat_forms_becomes_chat_template_kwargs(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
+    for cid, model, extra in (("t1", "hosted_vllm/opus", {"thinking": {"type": "disabled"}}),
+                              ("t2", "hosted_vllm/sonnet", {"enable_thinking": False}),
+                              ("t3", "hosted_vllm/opus", {"extra_body": {"enable_thinking": False}})):
+        out = _deploy(hook, cid, model, **extra)
+        assert out["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}, cid
+        assert hook.admission.recent[cid].endswith("; think=off"), cid
+    out = _deploy(hook, "t4", "hosted_vllm/opus", thinking={"type": "enabled", "budget_tokens": 2048})
+    assert "chat_template_kwargs" not in (out.get("extra_body") or {})
+    out = _deploy(hook, "t5", "hosted_vllm/opus", thinking={"type": "disabled"}, chat_template_kwargs={"enable_thinking": True})
+    assert "chat_template_kwargs" not in (out.get("extra_body") or {})  # the client's own setting wins
+
+
+def test_opus_thinking_budget_is_half_of_a_small_max_tokens(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
+    out = _deploy(hook, "b1", "hosted_vllm/opus", max_tokens=1600)
+    assert out["extra_body"]["thinking_token_budget"] == 800 and hook.admission.recent["b1"].endswith("; think<=800")
+    assert _deploy(hook, "b2", "hosted_vllm/opus", max_tokens=785)["extra_body"]["thinking_token_budget"] == 392
+    assert "thinking_token_budget" not in (_deploy(hook, "b3", "hosted_vllm/opus", max_tokens=32768).get("extra_body") or {})
+    assert "thinking_token_budget" not in (_deploy(hook, "b4", "hosted_vllm/opus").get("extra_body") or {})  # no client cap: Splash default
+    assert _deploy(hook, "b5", "hosted_vllm/opus", max_tokens=1600, extra_body={"thinking_token_budget": 100})["extra_body"]["thinking_token_budget"] == 100
+    assert "thinking_token_budget" not in (_deploy(hook, "b6", "hosted_vllm/opus", max_tokens=1600, reasoning_effort="none").get("extra_body") or {})
+    assert _deploy(hook, "b7", "hosted_vllm/sonnet", max_tokens=1600)["extra_body"]["thinking_token_budget"] == 800   # sonnet is on Splash too
+    assert "thinking_token_budget" not in (_deploy(hook, "b8", "hosted_vllm/haiku", max_tokens=1600).get("extra_body") or {})  # mtplx has its own effort budgets
+
+
+
+def test_clamp_effort_keeps_thinking_inside_a_small_max_tokens():
+    f = ua.clamp_effort
+    assert f("", 1600, "opus", False) == "minimal"      # no effort = unbounded; half of 1600 = 800: 512 fits, 2048 does not
+    assert f("", 6000, "opus", False) == "low"          # 3000: 2048 fits, 8192 does not
+    assert f("high", 6000, "sonnet", False) == "low"    # an explicit effort that is too big is lowered
+    assert f("medium", 20000, "sonnet", False) is None  # 10000 >= 8192: fits
+    assert f("", 785, "haiku", False) == "none"         # 392: nothing but a 1-token budget fits
+    assert f("", 70000, "opus", False) is None          # big max_tokens: leave it
+
+def test_mtplx_effort_is_lowered_for_a_small_max_tokens_in_the_hook(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
+    out = _deploy(hook, "m1", "hosted_vllm/haiku", max_tokens=1600)
+    assert out["reasoning_effort"] == "minimal" and hook.admission.recent["m1"].endswith("; effort=minimal/512")
+    assert _deploy(hook, "m2", "hosted_vllm/haiku", max_tokens=1600, reasoning_effort="high")["reasoning_effort"] == "minimal"
+    assert _deploy(hook, "m3", "hosted_vllm/haiku", max_tokens=40000).get("reasoning_effort") is None
+    out = _deploy(hook, "m4", "hosted_vllm/haiku", max_tokens=1600, chat_template_kwargs={"enable_thinking": False})
+    assert out.get("reasoning_effort") is None   # thinking is off already
+    assert _deploy(hook, "m5", "hosted_vllm/sonnet", max_tokens=1600).get("reasoning_effort") is None   # Splash sonnet: no mtplx clamp
+
+
+def test_effort_clamp_can_be_opted_out_with_a_header(monkeypatch):
+    monkeypatch.setattr(ua, "admit_mode", lambda: "off")
+    hook = ua.UltronAdmit()
+    assert _deploy(hook, "c1", "hosted_vllm/haiku", max_tokens=10000, reasoning_effort="medium")["reasoning_effort"] == "low"
+    hdr = {"proxy_server_request": {"headers": {"x-effort-clamp": "off"}}}
+    assert _deploy(hook, "c2", "hosted_vllm/haiku", max_tokens=10000, reasoning_effort="medium", **hdr)["reasoning_effort"] == "medium"

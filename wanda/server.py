@@ -57,7 +57,7 @@ def _litellm_port():
 LITELLM = f"http://127.0.0.1:{_litellm_port()}"
 TIERS_CONF = HOME / ".litellm/tiers.conf"   # the local tiers (litellm/tiers.conf in the repo), in display order
 TIER_COLORS = ["#c39bd3", "#88c0d0", "#a3be8c", "#ebcb8b", "#d08770", "#b48ead", "#8fbcbb"]  # = ultron_tiers.COLORS
-_tiers = {"mtime": None, "names": ["opus", "sonnet", "haiku"], "colors": {}}
+_tiers = {"mtime": None, "names": ["opus", "sonnet", "haiku"], "colors": {}, "cloud_only": []}
 
 
 def tier_names():
@@ -76,9 +76,22 @@ def tier_names():
             if names:
                 _tiers["names"] = names
                 _tiers["colors"] = {n: (cp[n].get("color") or "").strip() for n in names}
+                # local = no: no model on this Mac, requests go to the cloud overflow only (no llama-swap entry)
+                _tiers["cloud_only"] = [n for n in names if (cp[n].get("local") or "").strip().lower() in ("0", "no", "false", "off")]
         except (configparser.Error, OSError):
             pass
     return _tiers["names"]
+
+
+def cloud_only_tiers():
+    tier_names()
+    return [n for n in _tiers["cloud_only"] if n in _tiers["names"]]
+
+
+def local_tier_names():
+    """Tiers llama-swap runs: tier_names() minus the cloud-only ones (tiers.conf `local = no`)."""
+    gone = set(cloud_only_tiers())
+    return [n for n in tier_names() if n not in gone]
 
 
 def tier_colors():
@@ -103,6 +116,12 @@ MODES = [
              "cloud-only: every request to the combos, conversations already pinned local too (their pin stays, "
              "so they come back on auto), which lets a tier unload · x-route: private stays local · "
              "applies even while admission is in shadow"},
+    {"key": "idleunload", "label": "Idle unload", "path": ULTRON_DIR / "unload-mode", "env": None, "default": "on",
+     "options": ["on", "off"], "warn": ["off"],
+     "help": "on: a tier unloads after its llama-swap ttl idle · off: Wanda keeps every loaded tier warm by "
+             "touching /upstream/<tier>/health every 60 s, which restarts llama-swap's idle timer with no "
+             "inference, so nothing unloads on idle (holds memory: watch the headroom lamp) · swaps between "
+             "sets, Unload all and the memory guard still unload"},
     {"key": "admit", "label": "Admission", "path": ULTRON_DIR / "admit-mode", "env": "ULTRON_ADMIT_MODE", "default": "shadow",
      "options": ["shadow", "enforce", "off"],
      "help": "enforce: rewrite each new conversation to its local tier / substitute / cloud combo and pin it · "
@@ -194,10 +213,10 @@ def tier_config():
     try:
         mtime = SWAP_CFG.stat().st_mtime
     except OSError:
-        return {t: {} for t in tier_names()}
-    if mtime == _cfg_cache["mtime"] and set(_cfg_cache["tiers"]) == set(tier_names()):
+        return {t: {} for t in local_tier_names()}
+    if mtime == _cfg_cache["mtime"] and set(_cfg_cache["tiers"]) == set(local_tier_names()):
         return _cfg_cache["tiers"]
-    out, cur = {t: {} for t in tier_names()}, None
+    out, cur = {t: {} for t in local_tier_names()}, None
     for line in SWAP_CFG.read_text().splitlines():
         m = re.match(r"^  ([\w-]+):\s*(?:#.*)?$", line)   # a trailing comment too, or the next tier's cmd lands here
         if m:
@@ -213,6 +232,9 @@ def tier_config():
             m = re.search(r'^MODEL="([^"]+)"', txt, re.M)  # a model dir or an HF id: show its last part
             d["model"] = os.path.basename(m.group(1).rstrip("/")) if m else "?"
             d["model_path"] = m.group(1) if m else None
+            w = re.search(r'^# wanda-model:\s*(.+?)\s*$', txt, re.M)   # display name when MODEL= is a local alias
+            if w:
+                d["model"] = w.group(1)
         except Exception:
             d["model"] = "?"
     _cfg_cache.update(mtime=mtime, tiers=out)
@@ -445,8 +467,28 @@ class Collector:
         self._services = {"t": 0, "list": []}
         self._routing = {"t": 0, "data": None}
         self._omni = {"t": 0, "data": None}
+        self._keepalive_t = 0
         self._lora = {"t": 0, "data": None}
         self._llm = {"t": 0, "data": None}
+
+    def _keepalive(self, ts, tiers):
+        """Idle unload = off: llama-swap restarts a model's ttl timer on any request it proxies, /upstream/<tier>/health
+        included, so a cheap GET per loaded tier every 60 s holds it without running the model."""
+        if ts - self._keepalive_t < 60:
+            return
+        self._keepalive_t = ts
+        if mode_state(next(m for m in MODES if m["key"] == "idleunload"))["value"] != "off":
+            return
+        for t in local_tier_names():
+            if t in tiers and tiers[t]["state"] == IDLE and tiers[t].get("ttl"):   # ttl 0 never unloads
+                threading.Thread(target=self._touch, args=(t,), daemon=True).start()
+
+    @staticmethod
+    def _touch(tier):
+        try:
+            urllib.request.urlopen(f"{SWAP}/upstream/{tier}/health", timeout=5).read()
+        except Exception:
+            pass   # a failed touch only means the next one retries
 
     def event(self, kind, text, tier=None):
         self.events.append({"t": time.time(), "kind": kind, "tier": tier, "text": text})
@@ -461,7 +503,7 @@ class Collector:
             swap_ok, swap_err = False, str(e)
 
         tiers = {}
-        for t in tier_names():
+        for t in local_tier_names():
             r = running.get(t)
             d = {"tier": t, "ttl": cfg[t].get("ttl"), "model": cfg[t].get("model"), "state": UNLOADED}
             if not swap_ok:
@@ -491,6 +533,7 @@ class Collector:
             self._track(t, d, ts)
             tiers[t] = d
 
+        self._keepalive(ts, tiers)
         slow = self._slow
         if ts - slow["t"] >= 3:
             slow.update(t=ts, machine=machine_stats(), litellm=self._litellm(), swap_version=self._swap_version())
@@ -522,6 +565,7 @@ class Collector:
             "ts": ts,
             "tiers": tiers,
             "tier_colors": tier_colors(),   # also the display order (tiers.conf order)
+            "cloud_only": cloud_only_tiers(),   # tiers with no local model (tiers.conf `local = no`): no card controls
             "swap": {"ok": swap_ok, "error": swap_err, "version": slow.get("swap_version"),
                      "loaded": sum(1 for d in tiers.values() if d["state"] >= IDLE and d["state"] != DOWN)},
             "litellm": slow.get("litellm"),
@@ -1395,8 +1439,8 @@ def pretty_jsonl(name, line):
 
 
 def swap_call(tier, action):
-    if tier not in tier_names():
-        raise KeyError(tier)
+    if tier not in local_tier_names():
+        raise KeyError(tier)   # unknown, or cloud-only: nothing to load
     if action == "unload":
         req = urllib.request.Request(f"{SWAP}/api/models/unload/{tier}", method="POST", data=b"")
         urllib.request.urlopen(req, timeout=10).close()

@@ -115,7 +115,8 @@ BLOCK_RE = re.compile(r"^([ \t]*)# (__TIERS_[A-Z_]+__)[ \t]*$", re.M)
 #   after: shell run once the component's files are in place ("litellm"/"launchd": built-in steps)
 COMPONENTS = {
     "mtplx": {
-        "src": "mtplx/bin", "dst": "~/.mtplx/bin", "files": sorted({t["script"] for t in TIERS.tier.values()} | {"mtplx_effort.py", "tier-fable-tensorfold.sh"}),
+        "src": "mtplx/bin", "dst": "~/.mtplx/bin", "files": sorted({TIERS.tier[n]["script"] for n in TIERS.local_names()}
+                                                                    | {"mtplx_effort.py", "tier-opus-tensorfold.sh", "tier-opus-qwen36.sh", "tier-sonnet-mtplx.sh"}),
         "note": "tier scripts apply the next time llama-swap loads that tier",
     },
     "llama-swap": {
@@ -136,6 +137,10 @@ COMPONENTS = {
     "wanda": {
         "dst": "~/wanda", "tree": True, "exclude": ["README.md", "services.example.json"],
         "after": "bash ~/wanda/install.sh",
+    },
+    "search": {
+        "dst": "~/search", "tree": True, "exclude": ["README.md", "test_search.py"],
+        "after": "bash ~/search/install.sh",
     },
     "caddy": {
         "dst": BREW + "/etc", "files": ["Caddyfile"],

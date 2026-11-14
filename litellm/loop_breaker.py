@@ -45,6 +45,7 @@ THRESHOLDS = {  # run length at which each level starts: (warn, force, stop)
     "cycle": (5, 6, 8),  # full repetitions of a 2-4 step cycle
     "poll_cycle": (10, 16, 20),  # cycle containing a poll/wait step (hourly check + wakeup)
     "recur": (8, 12, 16),  # same call seen this many times in RECUR_WINDOW steps with other calls between; results may differ (ps output)
+    "text": (4, 6, 8),  # tools: 0 harnesses: the same assistant reply repeated
 }
 RECUR_WINDOW = 48
 MAX_STEPS = 256  # trailing tool steps inspected; enough for the stop threshold of any rule
@@ -343,10 +344,38 @@ def detect(steps: list[Step]) -> Verdict:
 
 # ----------------------------------------------------------------------------- interventions
 
+TEXT_MIN_CHARS = 24  # short acks ("Done") legitimately repeat; the guard is for prose
+
+def text_verdict(messages: list[dict[str, Any]]) -> Verdict:
+    """A harness that sends tools: 0 gets its tool output back as user text, so its loop shows
+    up as the same assistant reply repeated, which the tool-step rules cannot see. Counts
+    trailing identical replies, same threshold shape."""
+    texts = [_canon_str(_content_text(m.get("content"))) for m in messages
+             if isinstance(m, dict) and m.get("role") == "assistant"]
+    texts = [t for t in texts if t]
+    if not texts:
+        return Verdict()
+    last, run = texts[-1], 0
+    for t in reversed(texts):
+        if t != last:
+            break
+        run += 1
+    if run < 2 or len(last) < TEXT_MIN_CHARS:
+        return Verdict()
+    # A wait/poll reply, or observations saying the work is still in progress, is not a loop: same
+    # raised thresholds the tool rules give polls (10/16/20), so a stuck poll is still stopped.
+    obs = " ".join(_content_text(m.get("content"))[:4000] for m in messages[-(2 * run):]
+                   if isinstance(m, dict) and m.get("role") == "user")
+    poll = bool(POLL_RE.search(last) or BUSY_RE.search(obs))
+    return Verdict(_level(run, "poll" if poll else "text"), "text", run, ["text"], last[:200])
+
+
 def note_text(v: Verdict) -> str:
     tools = ", ".join(dict.fromkeys(v.tools))
     if "cycle" in v.rule:
         what = f"You have repeated the same cycle of calls ({tools}) {v.run} times and every result came back unchanged."
+    elif v.rule == "text":
+        what = f"You have written the same reply {v.run} turns in a row and nothing new came back."
     elif v.rule == "recur":
         what = f"You have called `{tools}` with the same arguments {v.run} times in your last {RECUR_WINDOW} calls, between other calls."
     elif v.rule == "error":
@@ -391,6 +420,12 @@ def _call_label(name: str, args: str, limit: int = 200) -> str:
 
 def stop_text(v: Verdict) -> str:
     tools = ", ".join(dict.fromkeys(v.tools))
+    if v.rule == "text":
+        return (
+            f"{NOTE_PREFIX} Stopped this turn: the model wrote the same reply {v.run} turns in a row "
+            f"and did not change course after being told to. Last reply: "
+            f"\"{v.result_preview[:200]}\". Send a new instruction (or switch to a larger model tier) to continue."
+        )
     return (
         f"{NOTE_PREFIX} Stopped this turn: the model called `{tools}` {v.run} times "
         f"{f'in its last {RECUR_WINDOW} calls' if v.rule == 'recur' else 'in a row with no change in the result'}, "
@@ -492,7 +527,11 @@ def evaluate(data: dict[str, Any], call_type: str, mode: str) -> Verdict:
         if mode == "off" or not isinstance(messages, list) or not messages or _opted_out(data):
             return Verdict()
         t0 = time.perf_counter()
-        v = detect(extract_steps(messages))
+        steps = extract_steps(messages)
+        v = detect(steps)
+        if v.level == "none" and not data.get("tools") and not any(s.calls for s in steps):
+            # tools: 0 harness: nothing for the tool rules to count, so watch the reply text
+            v = text_verdict(messages)
         if v.level != "none":
             if mode == "enforce":
                 apply(data, call_type, v)

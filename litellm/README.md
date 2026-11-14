@@ -397,6 +397,13 @@ through chat go in `chat_prefixes` (image, edit and audio), or in `audio_chat_pr
 their transcription has to go through a chat `input_audio` block. Opt out per request with
 `x-media: off`.
 
+## Search route (optional)
+
+`POST /ultron/search` is a LiteLLM pass-through (`pass_through_endpoints` in `config.yaml`, key required)
+to `search/server.py` on `127.0.0.1:8792`: web search through Firecrawl, library docs through Context7, one
+request shape for both. It is not part of the hooks and answers 502 until `./deploy.py push search` has
+installed the service. Details and the request fields: [`../search/README.md`](../search/README.md).
+
 ## ultron_rescue.py — tool calls written as text
 
 Small local models sometimes stop calling tools and write the command they mean to run in a

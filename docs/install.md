@@ -22,12 +22,12 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 | LiteLLM | `~/.local/bin/litellm` | `uv tool install 'litellm[proxy]==1.102.1' --with prometheus_client` |
 | llama-swap | `~/.local/bin/llama-swap` | download the macOS arm64 binary from [llama-swap releases](https://github.com/mostlygeek/llama-swap/releases) (v260 or newer: the config uses the `matrix` router and startup preload) |
 | mtplx | `~/.mtplx/bin/mtplx` | install the MTPLX app; it provides the CLI shim at that path (tested with 2.12.0; 2.12.1 fixes an SSD-cache leak the haiku script works around) |
-| Splash | `splash` (Homebrew) | `brew install incoai/tap/splash` (tested with 1.3.2); the fable tier's runtime |
+| Splash | `splash` (Homebrew) | `brew install incoai/tap/splash` (tested with 1.3.2); the opus and sonnet tiers' runtime |
 | mlx-vlm (optional) | `~/.local/bin/mlx_vlm.server` | `uv tool install mlx-vlm==0.6.13`; only the image judge uses it |
 
-Only want mtplx? Delete the `[fable]` section from `litellm/tiers.conf` (and `fable |` from its
-`resident =` line); Splash only runs the fable tier, because it decodes the dense 27B about twice
-as fast.
+Only want mtplx? Use the mtplx alternates `tier-opus-qwen36.sh` and `tier-sonnet-mtplx.sh` (copy each
+over `tier-opus.sh` / `tier-sonnet.sh`; their headers list the `tiers.conf` keys to change). Splash runs the
+dense 27B about twice as fast, which is why it serves opus and sonnet.
 
 ## 3. The models
 
@@ -36,9 +36,9 @@ gives a tier 300 s to become healthy, which isn't enough for a first download.
 
 | Tier | Model | Get it |
 |---|---|---|
-| fable | `mlx-community/Qwen3.8-27B-4bit` | `uvx --from huggingface_hub hf download mlx-community/Qwen3.8-27B-4bit` (Splash picks the draft model itself) |
-| opus | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | `uvx --from huggingface_hub hf download Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed --local-dir ~/.mtplx/models/Youssofal--Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` |
-| sonnet | `Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed` | the same, with that id |
+| fable | none: cloud only (`local = no`; set its `cloud` model in `tiers.conf`) | — |
+| opus | `mlx-community/Qwen3.8-27B-4bit` | `uvx --from huggingface_hub hf download mlx-community/Qwen3.8-27B-4bit` (Splash picks the draft model itself) |
+| sonnet | `ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF` (IQ3_XXS + MTP head) | `uvx --from huggingface_hub hf download ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF` |
 | haiku | `Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed` | the same, with that id |
 | judge (optional) | `skylenage-ai/SkyJM-Gen-4B`, converted to MLX 8-bit at `~/models/SkyJM-Gen-4B-mlx-8bit` | the three commands in the header of `mtplx/bin/tier-judge.sh`; or delete the `[judge]` section from `litellm/tiers.conf` (and `\| judge` from `resident =`) |
 
@@ -87,7 +87,7 @@ open http://localhost/                                   # Wanda
 ./deploy.py status                                       # everything "in sync"
 ```
 
-First requests to fable, opus and sonnet take 15–30 s while the tier loads; Wanda shows it as LOADING.
+First requests to opus and sonnet take 15–30 s while the tier loads; Wanda shows it as LOADING.
 
 ## 7. Point your agents at it
 

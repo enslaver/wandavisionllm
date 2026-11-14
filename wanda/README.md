@@ -13,14 +13,15 @@ Wanda 127.0.0.1:8790 behind Caddy :443 / :80
 
 - **Status lamps** — LiteLLM liveness, llama-swap, memory / swap / pressure (plus the top 3
   processes by memory), GPU, routing modes, and any on/off flags you define.
-- **Tier cards** — live state (UNLOADED / LOADING / IDLE / PREFILL / GENERATING), decode or prefill
+- **Tier cards** — a tier marked `local = no` in tiers.conf gets a cloud-only card (where its requests go, no Load / Unload). Live state (UNLOADED / LOADING / IDLE / PREFILL / GENERATING), decode or prefill
   tok/s, TTFT, MTP acceptance, cache hit, 5-minute stats, lifetime tokens, memory + session bank,
   idle → unload countdown, the request in flight, Load / Unload buttons.
 - **Throughput trace** — 10 minutes per tier; each completed request is a bar over its real span.
 - **Traffic flow** — agents (Claude Code, pi, Hermes, opencode, …, labelled by Tailscale name) →
   LiteLLM → local tiers or cloud combos, over the last hour.
 - **Models** — per-model request stats from the `ultron_stats` hook, local and cloud.
-- **Controls & routing** — one switch per hook mode file in `~/.ultron` (Route, Admission, Loop
+- **Controls & routing** — one switch per hook mode file in `~/.ultron` (Route, Idle unload = keep loaded
+  tiers warm instead of unloading them on idle, Admission, Loop
   breaker, Media, Tool-call rescue, Headroom = context compression, Memory = Hindsight), 1 h / 24 h routing, loop, media,
   rescue and Headroom-savings tiles, a "Why cloud" tile (last hour's cloud requests by reason: memory guard,
   refused, shed, backlog, route-mode, a cloud pin, plus local → cloud fallbacks), OmniRoute combo
