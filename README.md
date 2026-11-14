@@ -78,6 +78,7 @@ Mac: [docs/hardware.md](docs/hardware.md).
 | `launchd/` | `~/Library/LaunchAgents/` | keeps LiteLLM and llama-swap running |
 | `bin/` | `~/bin/` | `backup-stack.sh` |
 | [`Vision/`](Vision/README.md) | `~/.litellm/` (the media hook) | images and video: the media hook, an image judge (`ultron/judge`) and its ranking tool, ComfyUI workflows, Open WebUI tools |
+| [`search/`](search/README.md) | `~/search/` (optional) | web + library-docs search for agents: `POST /ultron/search` behind the LiteLLM key |
 | [`gpu-box/`](gpu-box/README.md) | a Windows PC with an NVIDIA GPU (optional) | sets up ComfyUI and Unsloth there: `python gpu-box\deploy.py` |
 | [`lora/`](lora/README.md) | — (artifacts in `~/lora/`) | optional: fine-tune a tier on its own agent failures, or train haiku on images with Unsloth |
 | `deploy.py` | — | the one way to install or change any of the above |
