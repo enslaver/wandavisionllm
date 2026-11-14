@@ -31,6 +31,7 @@ Wanda 127.0.0.1:8790 behind Caddy :443/:80 — the dashboard
 | `caddy/` | `/opt/homebrew/etc/Caddyfile` | validated, then reloaded |
 | `launchd/` | `~/Library/LaunchAgents/` | LiteLLM and llama-swap agents |
 | `bin/` | `~/bin/` | `backup-stack.sh` |
+| `search/` | `~/search/` | optional web + docs search service (`POST /ultron/search`); `install.sh` loads its LaunchAgent; README and `test_search.py` are NOT deployed |
 | `gpu-box/` | — | NOT deployed from here: `gpu-box/deploy.py` runs on the optional Windows GPU box (ComfyUI, Caddy, Unsloth) |
 | `lora/` | — | NOT deployed: optional LoRA fine-tuning scripts (mlx-lm on the Mac; Unsloth on the GPU box for haiku images); artifacts in `~/lora/` |
 | `docs/` | — | why, hardware, install, configuration, architecture |
@@ -52,7 +53,7 @@ Wanda 127.0.0.1:8790 behind Caddy :443/:80 — the dashboard
 ## Commands
 
 ```bash
-make test                          # unit tests (litellm/, Vision/media/, gpu-box/)
+make test                          # unit tests (litellm/, Vision/media/, gpu-box/, search/)
 make check                         # render templates + config/stdlib/home-path checks
 make lint                          # ruff + py3.9 compile
 ./deploy.py status | push [--dry-run] [component ...] | pull | render DIR
