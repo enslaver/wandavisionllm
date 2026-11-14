@@ -265,7 +265,7 @@ def repo_md5(p):
 
 def sh(cmd):
     r = subprocess.run(["/bin/bash", "-c", cmd], capture_output=True, text=True)
-    return r.returncode, (r.stdout + r.stderr).strip()
+    return r.returncode == 0, (r.stdout + r.stderr).strip()
 
 
 def mapping(names):
