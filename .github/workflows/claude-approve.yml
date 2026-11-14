@@ -1,0 +1,50 @@
+name: Claude Approve
+
+# After CI passes on a PR, Claude reviews it and approves, or requests changes.
+# Same-repo PRs only: this runs with write access and the PR's code, so fork PRs are skipped.
+# Needs Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  approve:
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      id-token: write
+    steps:
+      - name: Find the PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh pr list --repo "${{ github.repository }}" --head "${{ github.event.workflow_run.head_branch }}" --state open --json number -q '.[0].number')
+          echo "number=$n" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the PR head
+        if: steps.pr.outputs.number != ''
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 1
+
+      - name: Review and approve
+        if: steps.pr.outputs.number != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            CI has passed on PR #${{ steps.pr.outputs.number }} in ${{ github.repository }}. Review its diff
+            (`gh pr diff ${{ steps.pr.outputs.number }}`) for correctness bugs, security problems, secrets,
+            and anything private or machine-specific (see CLAUDE.md). If you find none, approve with
+            `gh pr review ${{ steps.pr.outputs.number }} --approve --body "<one-line reason>"`. Otherwise run
+            `gh pr review ${{ steps.pr.outputs.number }} --request-changes --body "<the problems>"`. Do not merge.
+          claude_args: '--allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*)"'
