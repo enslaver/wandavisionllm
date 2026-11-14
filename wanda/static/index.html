@@ -75,6 +75,10 @@ h2 .aside{margin-left:auto;font-family:var(--mono);letter-spacing:0;text-transfo
 .pill.IDLE{color:var(--text)}
 .pill.LOADING{border-color:var(--amber);color:var(--amber);animation:pulse 1.2s infinite}
 .pill.UNREACHABLE{border-color:var(--red);color:var(--red)}
+.pill.CLOUDONLY{border-color:#5e81ac;color:#8fb3de}
+.tier.cloudonly{border-top-color:#5e81ac}
+.tier.cloudonly .tname{color:#8fb3de}
+.tier .cnote{font-family:var(--mono);font-size:10.5px;color:var(--dimmer);line-height:1.35}
 .tier .port{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dimmer)}
 .tier .model{font-family:var(--mono);font-size:11px;color:var(--dimmer);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .big{display:flex;align-items:baseline;gap:8px;min-width:0}
@@ -346,7 +350,9 @@ h2 .aside{margin-left:auto;font-family:var(--mono);letter-spacing:0;text-transfo
 "use strict";
 const TOKEN = "__WANDA_TOKEN__";
 const WANDA_NAME = "__WANDA_NAME__";
-let TIERS = ["opus","sonnet","haiku"];   // replaced by the status feed's tier_colors (tiers.conf order)
+let TIERS = ["opus","sonnet","haiku"];
+let CLOUD_ONLY = [];   // tiers with no local model (tiers.conf `local = no`)
+const LOCALT = () => TIERS.filter(t=>!CLOUD_ONLY.includes(t));   // replaced by the status feed's tier_colors (tiers.conf order)
 const TC = {opus:"#c39bd3", sonnet:"#88c0d0", haiku:"#a3be8c"};
 const S = {UNLOADED:0, LOADING:1, IDLE:2, PREFILL:3, GENERATING:4, UNREACHABLE:5};
 const WINDOW_S = 600;
@@ -396,9 +402,9 @@ function lamps(p){
     : {n:"LiteLLM",s:"red",d:"not answering on :4000 — "+ll.error});
   const loaded = TIERS.filter(t=>p.tiers[t] && p.tiers[t].state>=S.IDLE && p.tiers[t].state<S.UNREACHABLE).length;
   const loading = TIERS.filter(t=>p.tiers[t] && p.tiers[t].state===S.LOADING).length;
-  L.push(sw.ok ? {n:"llama-swap",s:"green",d:`${sw.version||"?"} · ${loaded}/3 loaded${loading?` · ${loading} loading`:""}`}
+  L.push(sw.ok ? {n:"llama-swap",s:"green",d:`${sw.version||"?"} · ${loaded}/${LOCALT().length} loaded${loading?` · ${loading} loading`:""}`}
                : {n:"llama-swap",s:"red",d:"127.0.0.1:8001 unreachable — "+(sw.error||"")});
-  const snapM = TIERS.map(t=>p.tiers[t]&&p.tiers[t].snap).find(Boolean);
+  const snapM = LOCALT().map(t=>p.tiers[t]&&p.tiers[t].snap).find(Boolean);
   const avail = m.mem_available, total = m.mem_total;
   const swapFrac = m.swap_total ? m.swap_used/m.swap_total : 0;
   const pr = {1:"normal",2:"warn",4:"critical"}[m.pressure] || "?";
@@ -455,6 +461,37 @@ function buildCard(t){
 async function tierAction(t,a){
   try{ const r=await api("/api/tier",{tier:t,action:a}); toast(`${t}: ${r.note}`, true); }
   catch(e){ toast(`${t} ${a} failed — ${e.message}`); }
+}
+/* A tier with `local = no` has no local model: its claude-<tier>-* ids go to the OmniRoute combo. The card shows that
+   route and what the combo resolves to (the /api/status omniroute block); no Load / Unload. */
+const cloudCards={};
+function renderCloudCards(omni){
+  for(const t of CLOUD_ONLY){
+    let k=cloudCards[t];
+    if(!k){
+      const c=el("div","tier cloudonly"); c.style.setProperty("--tc","#5e81ac");
+      const head=el("div","head"), bulb=el("span","bulb"), nm=el("span","tname",t), pill=el("span","pill CLOUDONLY","CLOUD ONLY");
+      head.append(bulb,nm,pill);
+      const model=el("div","model","→ OmniRoute combo for "+t);
+      const stats=el("div","stats"), V={};
+      for(const n of ["Points to","Combo","Requests","OK","Avg","Last"]){ const [s2,v]=stat(n); V[n]=v; stats.appendChild(s2); }
+      const note=el("div","cnote","no local model: requests for this tier go to the cloud overflow only");
+      c.append(head,model,stats,note);
+      $("tiers").prepend(c);
+      k=cloudCards[t]={c,bulb,model,V};
+    }
+    const f=(omni&&omni.combos&&omni.combos[t])||null, V=k.V, ms=(f&&f.models)||[], first=ms[0]&&ms[0].model;
+    V["Points to"].textContent = first ? first+(ms.length>1?` +${ms.length-1}`:"") : (omni&&omni.error?"OmniRoute ?":"no calls yet");
+    V["Points to"].title = ms.map(m=>m.model).join(" → ") || "";
+    V["Combo"].textContent = (f&&f.combo)||"–";
+    V["Requests"].textContent = f ? String(f.requests||0) : "–";
+    V["OK"].textContent = f&&f.requests ? Math.round(100*f.ok/f.requests)+"%" : "–";
+    V["Avg"].textContent = f&&f.avg_ms!=null ? (f.avg_ms/1000).toFixed(1)+" s" : "–";
+    V["Last"].textContent = f&&f.last ? dur((Date.now()-Date.parse(f.last))/1000)+" ago" : "–";
+    k.bulb.className="bulb "+(omni&&omni.error?"red":"");
+    k.bulb.style.background = omni&&omni.error ? "" : "#5e81ac";
+    k.model.title = omni&&omni.error ? String(omni.error) : "";
+  }
 }
 function renderTier(t, d, now){
   const k = cards[t] || (cards[t]=buildCard(t));
@@ -544,14 +581,14 @@ function pushHist(p){
     const h=hist[t]||(hist[t]=[]); h.push([p.ts, d.state, tok]); while(h.length && h[0][0] < p.ts-WINDOW_S-5) h.shift(); }
 }
 function drawTrace(now){
-  const cv=$("trace"), dpr=window.devicePixelRatio||1, W=cv.clientWidth||320, H=14+45*TIERS.length;
+  const cv=$("trace"), dpr=window.devicePixelRatio||1, W=cv.clientWidth||320, H=14+45*LOCALT().length;
   cv.style.height=H+"px";
   cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
   const g=cv.getContext("2d"); g.setTransform(dpr,0,0,dpr,0,0); g.clearRect(0,0,W,H);
-  const LW=58, x0=LW+4, x1=W-6, pw=Math.max(20,x1-x0), laneH=Math.floor((H-14)/TIERS.length);
+  const LW=58, x0=LW+4, x1=W-6, pw=Math.max(20,x1-x0), laneH=Math.floor((H-14)/LOCALT().length);
   const X = t => x0 + pw*(1-(now-t)/WINDOW_S);
   g.font='10px ui-monospace,"SF Mono",Menlo,monospace'; g.textBaseline="middle";
-  TIERS.forEach((t,i)=>{
+  LOCALT().forEach((t,i)=>{
     const top=i*laneH, base=top+laneH-6, peakH=laneH-12, h=(hist[t]||[]).filter(s=>s[0]>=now-WINDOW_S);
     const rs=[...done.values()].filter(r=>r.tier===t&&r.t>=now-WINDOW_S).sort((a,b)=>a.t-b.t);
     const vmax = Math.max(40, ...h.map(s=>s[2]||0), ...rs.map(r=>r.decode||0));
@@ -704,7 +741,7 @@ function renderModels(l){
   const key=mWin+JSON.stringify(l); if(key===mKey) return; mKey=key;
   if(l.error){ $("modelaside").textContent="error — "+l.error; }
   const agg=(l.windows||{})[mWin]||{}, live=l.live||[];
-  const eps=TIERS.map(t=>"ultron/"+t);
+  const eps=LOCALT().map(t=>"ultron/"+t);
   for(const e of [...Object.keys(agg), ...live.map(r=>r.endpoint)]) if(e && !eps.includes(e)) eps.push(e);
   const f=document.createDocumentFragment();
   for(const ep of eps){
@@ -778,7 +815,7 @@ const AGENT = {
 };
 function agentMeta(a){ const [base,flag]=String(a).split("+"); const m=AGENT[base]||AGENT.other;
   return flag==="unreal" ? {name:m.name+" · Unreal", icon:"cube", color:"#f0b35a", base:m} : m; }
-const endpoints=()=>[...TIERS.map(t=>["ultron/"+t,"local"]), ...TIERS.map(t=>["cloud/"+t,"cloud"])];
+const endpoints=()=>[...LOCALT().map(t=>["ultron/"+t,"local"]), ...TIERS.map(t=>["cloud/"+t,"cloud"])];
 const epColor = e => e.startsWith("cloud/") ? CLOUD : (TC[e.split("/")[1]]||"#888");
 let flowWin="900", flowKey="", flowPaths={}, particles=[], seenEv=new Set(), flowHubPulse=0;
 function buildWinSel(){
@@ -1116,10 +1153,10 @@ function paintBar(p){
   const sw = m.swap_total ? m.swap_used/m.swap_total : 0;
   set("swap", `${ring(sw, sw>.85?"var(--amber)":"#5e81ac")}<span class="lbl">Swap</span><b>${gb(m.swap_used)}</b>`, `swap ${gb(m.swap_used)} of ${gb(m.swap_total)}`);
   set("gpu", `${ring((m.gpu_util||0)/100, "#c39bd3")}<span class="lbl">GPU</span><b>${m.gpu_util==null?"–":m.gpu_util+"%"}</b>`, `GPU ${m.gpu_util}% busy · ${gb(m.gpu_mem)} in use`);
-  const dots=TIERS.map(t=>{ const d=p.tiers[t]||{}, st=d.state; const on=st>=S.IDLE&&st<S.UNREACHABLE;
+  const dots=LOCALT().map(t=>{ const d=p.tiers[t]||{}, st=d.state; const on=st>=S.IDLE&&st<S.UNREACHABLE;
     return `<i class="${on?"on":""} ${st===S.GENERATING||st===S.PREFILL?"gen":""}" style="color:${TC[t]};background:${on?TC[t]:st===S.LOADING?"var(--amber)":st===S.UNREACHABLE?"var(--red)":"#2a3138"}" title="${t}: ${d.state_name||"?"}"></i>`; }).join("");
-  set("tiers", `<span class="lbl">Tiers</span><span class="dots">${dots}</span>`, TIERS.map(t=>`${t}: ${(p.tiers[t]||{}).state_name||"?"}`).join(" · "));
-  let tok=0, busy=[]; for(const t of TIERS){ const d=p.tiers[t], f=d&&d.snap&&d.snap.inflight&&d.snap.inflight[0];
+  set("tiers", `<span class="lbl">Tiers</span><span class="dots">${dots}</span>`, LOCALT().map(t=>`${t}: ${(p.tiers[t]||{}).state_name||"?"}`).join(" · "));
+  let tok=0, busy=[]; for(const t of LOCALT()){ const d=p.tiers[t], f=d&&d.snap&&d.snap.inflight&&d.snap.inflight[0];
     if(f){ busy.push(t); tok+= d.state===S.GENERATING ? (f.decode_tok_s||0) : 0; } }
   set("tok", `<span class="lbl">Now</span><b class="${busy.length?"ok":""}">${busy.length?f0(tok)+" t/s":"idle"}</b>`, busy.length?`${busy.join("+")} busy`:"no request in flight");
   const h=r.h1||{total:0,local:0,cloud:0};
@@ -1154,11 +1191,13 @@ function render(p){
   if(!p || !p.tiers) return;   // Wanda just restarted: the first sample isn't in yet
   last=p; lastTickAt=Date.now();
   if(p.tier_colors){ TIERS=Object.keys(p.tier_colors); Object.assign(TC, p.tier_colors); }
+  CLOUD_ONLY = p.cloud_only||[];
   if(!barBuilt){ buildBar(); barBuilt=true; }
   if(!flagsBuilt && p.flags && Object.keys(modeBtns).length){ buildFlagCards(p.flags); flagsBuilt=true; }
   pushHist(p); pushDone(p.requests, p.ts);
   const L=lamps(p);
   for(const t of TIERS) if(p.tiers[t]) renderTier(t, p.tiers[t], p.ts);
+  try{ renderCloudCards(p.omniroute); }catch(e){ console.error("cloud card",e); }
   drawTrace(p.ts); renderFeed(p); renderServices(p.services); renderRouting(p.routing); paintFlagCards(p.flags||[]); renderFlow(p); renderOmni(p.omniroute); renderModels(p.llm); renderLora(p.lora); paintBar(p);
   const worst = L.some(l=>l.s==="red") ? "red" : L.some(l=>l.s==="amber") ? "amber" : "green";
   $("overall").className="overall "+worst;

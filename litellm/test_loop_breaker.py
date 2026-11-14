@@ -256,3 +256,47 @@ def test_rotation_of_repeated_diagnostics_is_caught():
     assert level(an(rot)) == "warn"  # first diagnostic back 10 times among changing reads
     ok = [("Bash", {"command": f"ls {i}"}, f"out {i}") for i in range(30)]
     assert level(an(ok)) == "none"  # distinct calls = progress
+
+
+# --- tools: 0 harnesses: the loop is repeated reply text -------
+
+def text_hist(n, reply="The blueprints page came back empty and the nodes are not visible, so I page again."):
+    """No tool calls at all: the harness feeds tool output back as user text, replies repeat."""
+    msgs = [{"role": "user", "content": "go"}]
+    for i in range(n):
+        msgs.append({"role": "assistant", "content": reply})
+        msgs.append({"role": "user", "content": f"observation {i}: page_in returned nothing"})
+    return msgs
+
+
+def test_text_repeat_escalates_on_the_same_three_strikes():
+    assert lb.text_verdict(text_hist(3)).level == "none"
+    assert lb.text_verdict(text_hist(4)).level == "warn"
+    assert lb.text_verdict(text_hist(6)).level == "force"
+    v = lb.text_verdict(text_hist(8))
+    assert v.level == "stop" and v.rule == "text"
+
+
+def test_text_rule_resets_on_a_different_reply_and_short_acks():
+    msgs = text_hist(8)
+    msgs[-2]["content"] = "Now checking inspect_components instead of the blueprint graph."
+    assert lb.text_verdict(msgs).level == "none"
+    assert lb.text_verdict(text_hist(8, "Done.")).level == "none"
+
+
+def test_text_rule_only_for_requests_that_declare_no_tools():
+    tools = [{"type": "function", "function": {"name": "bash", "parameters": {"type": "object"}}}]
+    assert lb.evaluate({"messages": text_hist(8), "tools": tools}, "acompletion", "shadow").level == "none"
+    assert lb.evaluate({"messages": text_hist(8)}, "acompletion", "shadow").level == "stop"
+
+
+def test_text_rule_gives_polls_the_poll_thresholds():
+    wait = '{"action": "wait", "seconds": 30, "reason": "render still running, checking again"}'
+    assert lb.text_verdict(text_hist(8, wait)).level == "none"  # a wait reply is a poll
+    assert lb.text_verdict(text_hist(10, wait)).level == "warn"
+    assert lb.text_verdict(text_hist(20, wait)).level == "stop"  # a stuck poll still stops
+    busy = text_hist(8)
+    for m in busy:
+        if m["role"] == "user" and m["content"] != "go":
+            m["content"] += ' {"state": "building"}'
+    assert lb.text_verdict(busy).level == "none"  # observations say work is in progress

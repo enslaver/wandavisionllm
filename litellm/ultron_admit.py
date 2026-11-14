@@ -160,6 +160,15 @@ def tier_for(model: str) -> str | None:
     return tiers().tier_for(model)
 
 
+def cloud_only_tiers() -> tuple[str, ...]:
+    """Tiers with `local = no` in tiers.conf: no local model, answered by cloud/<tier> (LiteLLM's model_list,
+    untouched by this hook, like an explicit cloud/* request). Empty when tiers.conf has none."""
+    try:
+        return tuple(getattr(tiers(), "cloud_only", lambda: [])())
+    except Exception:
+        return ()
+
+
 def cloud_for(tier: str) -> bool:
     """The tier has a cloud/<tier> overflow: a `cloud` model in tiers.conf, and OMNIROUTE_BASE
     is not set empty in ~/.litellm/env (empty = run local-only)."""
@@ -355,20 +364,25 @@ def _read_word(path: str) -> str:
 
 
 def tier_lock() -> str | None:
-    """Locked heavy tier (fable|opus) that serves both claude-fable* and claude-opus*; None = off."""
+    """Locked heavy tier (fable|opus) that serves both claude-fable* and claude-opus*; None = off.
+    A cloud-only tier (`local = no`) has nothing to lock."""
     v = _read_word(TIER_LOCK_FILE)
-    return v if v in ("fable", "opus") else None
+    return v if v in ("fable", "opus") and v not in cloud_only_tiers() else None
+
+
+def _lockable() -> tuple[str, ...]:
+    return tuple(t for t in ("fable", "opus") if t not in cloud_only_tiers())
 
 
 def locked_tier(tier: str | None) -> str | None:
     """Local tier that serves a request for `tier` under the lock (fable<->opus collapse onto the locked one)."""
     lock = tier_lock()
-    return lock if lock and tier in ("fable", "opus") else tier
+    return lock if lock and tier in _lockable() else tier
 
 
 def lock_swapping(tier: str | None) -> bool:
     """Wanda is swapping the lock: fable/opus requests go to cloud/<their own tier> until the locked tier is up."""
-    return tier in ("fable", "opus") and bool(_read_word(TIER_SWAP_FILE))
+    return tier in _lockable() and bool(_read_word(TIER_SWAP_FILE))
 
 
 def route_mode() -> str:
@@ -566,7 +580,7 @@ def matrix() -> tuple[list[frozenset[str]], dict[str, float]]:
     except Exception:
         pass
     if not _matrix_cache["sets"]:  # llama-swap's config unreadable: assume one tier at a time
-        return [frozenset({t}) for t in tiers().names], {}
+        return [frozenset({t}) for t in tiers().names if t not in cloud_only_tiers()], {}
     return _matrix_cache["sets"], _matrix_cache["costs"]
 
 
@@ -930,7 +944,8 @@ class Admission:
         if tier and not tiers().tier[tier]["routed"]:
             return await self.admit_direct(data, call_type, mode, tier)
         if tier is None:  # the client asked for cloud/<tier> itself: no decision, but log the traffic
-            ctier = str(model).split("/", 1)[1] if "/" in str(model) else "?"
+            ctier = (str(model).split("/", 1)[1] if str(model).startswith("cloud/")
+                     else (cloud_only_tiers() or ("?",))[0])  # a cloud-only tier (local = no) answers the other ids
             ident, cid = pin_identity(data, ctier), data.get("litellm_call_id")
             _log({"ts": time.time(), "mode": mode, "applied": True, "requested": model, "tier": ctier, "target": model,
                   "endpoint": model, "rule": "explicit", "new": False, "key": ident["key"], "call_id": cid,
@@ -955,7 +970,7 @@ class Admission:
             pins.expire(now)
             pin = pins.get(pin_mode, ident["key"])
             if (pin is not None and pin["target"].startswith("ultron/")
-                    and (tier != req_tier or (tier_lock() and req_tier in ("fable", "opus")))):
+                    and (tier != req_tier or (tier_lock() and req_tier in _lockable()))):
                 pin = dict(pin, target=f"ultron/{tier}")  # lock moved the conversation onto the locked tier
             if pin is not None and swapping and pin["target"].startswith("ultron/"):
                 pin = None  # re-decide: the swap sends it to cloud until the locked tier is up
@@ -1212,11 +1227,37 @@ class UltronAdmit(CustomLogger):  # type: ignore[misc,valid-type]
         except Exception as exc:
             _log({"ts": time.time(), "error": "session: " + repr(exc)})
         try:
-            if t and kwargs.get("tools") and trace_on():
+            if t and trace_wanted(kwargs.get("messages"), kwargs.get("tools")) and trace_on():
                 key = self.admission.keys.get(kwargs.get("litellm_call_id") or "") or _fallback_key(kwargs["messages"], t["name"])
-                write_trace(key, t["name"], kwargs["messages"], kwargs["tools"])
+                write_trace(key, t["name"], kwargs["messages"], kwargs.get("tools"))
         except Exception as exc:
             _log({"ts": time.time(), "error": "trace: " + repr(exc)})
+        try:
+            client_max = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")  # what the client asked, before TIER_DEFAULTS
+            if tier in EFFORT_TIERS or tier in SPLASH_TIERS:
+                body = dict(kwargs.get("extra_body") or {})
+                ctk = {**(kwargs.get("chat_template_kwargs") or {}), **(body.get("chat_template_kwargs") or {})}
+                cid = kwargs.get("litellm_call_id") or ""
+                note = ""
+                if "enable_thinking" not in ctk and thinking_off_requested(kwargs, body):
+                    kwargs["extra_body"] = {**body, "chat_template_kwargs": {**ctk, "enable_thinking": False}}
+                    note = "; think=off"
+                elif (tier in SPLASH_TIERS and client_max and "thinking_token_budget" not in body and "enable_thinking" not in ctk
+                        and str(kwargs.get("reasoning_effort") or "").strip().lower() != "none"):
+                    budget = think_budget_for(int(client_max))
+                    if budget:
+                        kwargs["extra_body"] = {**body, "thinking_token_budget": budget}
+                        note = f"; think<={budget}"
+                elif tier in EFFORT_TIERS and client_max and _headers(kwargs).get("x-effort-clamp") != "off":
+                    # x-effort-clamp: off keeps the client's own reasoning_effort whatever its max_tokens
+                    fit = clamp_effort(str(kwargs.get("reasoning_effort") or "").strip().lower(), int(client_max), tier,
+                                       bool(kwargs.get("tools")))
+                    if fit and "enable_thinking" not in ctk:
+                        kwargs["reasoning_effort"] = fit   # echoed as effort=<level>/<budget> just below
+                if note and cid in self.admission.recent and note not in self.admission.recent[cid]:
+                    self.admission.recent[cid] += note
+        except Exception as exc:
+            _log({"ts": time.time(), "error": "thinking: " + repr(exc)})
         try:
             for field, value in TIER_DEFAULTS.get(tier or "", {}).items():
                 if field == "max_tokens":
@@ -1765,6 +1806,40 @@ def _tiers_with(flag: str) -> tuple[str, ...]:
         return ()
 
 EFFORT_TIERS = _tiers_with("effort")                 # the tier script maps reasoning_effort (mtplx_effort.py)
+SPLASH_TIERS = tuple(t for t in _tiers_with("reasoning_effort") if t not in EFFORT_TIERS)  # server reads reasoning_effort itself
+THINK_CLAMP_BELOW = 16384  # a reasoning_effort server's default thinking budget: a client max_tokens under 2x this leaves no room for the answer
+
+
+def thinking_off_requested(kwargs: dict[str, Any], body: dict[str, Any]) -> bool:
+    """A client asked for no thinking in a form the local backends ignore: OpenAI-chat `thinking: {type: disabled}`
+    or `enable_thinking: false` (top level or extra_body). The local servers only honour chat_template_kwargs /
+    reasoning_effort (a harness once reported "thinking was switched off but the model thought anyway")."""
+    th = kwargs.get("thinking")
+    if isinstance(th, dict) and str(th.get("type", "")).lower() == "disabled":
+        return True
+    return kwargs.get("enable_thinking") is False or body.get("enable_thinking") is False
+
+
+def clamp_effort(current: str, max_tokens: int, tier: str, has_tools: bool) -> str | None:
+    """mtplx tiers: the reasoning_effort to send so thinking cannot crowd the answer out of a small client max_tokens,
+    or None to leave the request alone. Thinking counts inside max_tokens. A request with no effort thinks without a
+    bound; 16,384 stands in for "unbounded", so a 32k max_tokens is
+    left alone. Anything that would take more than 60% of max_tokens is lowered to the highest effort whose budget is
+    at most half of it."""
+    if current in EFFORT_BUDGETS:
+        cur = EFFORT_BUDGETS[current]
+    else:
+        cur = EFFORT_BUDGETS["high"]
+    if cur <= max_tokens * 0.6:
+        return None
+    fit = [name for name, b in EFFORT_BUDGETS.items() if b <= max_tokens // 2]
+    return max(fit, key=lambda n: EFFORT_BUDGETS[n]) if fit else "none"
+
+
+def think_budget_for(max_tokens: int) -> int | None:
+    """Thinking budget for a reasoning_effort tier with a small max_tokens: half of it, so thinking cannot use the
+    whole allowance (thinking counts inside max_tokens). None = leave the server's default."""
+    return max(64, max_tokens // 2) if 0 < max_tokens < 2 * THINK_CLAMP_BELOW else None
 ECHO_EFFORT_TIERS = EFFORT_TIERS + _tiers_with("reasoning_effort")  # + tiers whose server reads reasoning_effort itself: echo only
 # A tier whose server takes a top-level `thinking_budget` instead of reasoning_effort would be named
 # here and get the table above as extra_body.thinking_budget. Empty for the reference tiers.
@@ -1776,7 +1851,7 @@ except Exception:
     EFFORT_CAP = {}
 # Sampling defaults applied only when the request sets none, so a client's own temperature/max_tokens
 # win. The reference fable server sets none of its own (temperature 1.0, unlimited output).
-TIER_DEFAULTS = {"fable": {"temperature": 0.6, "max_tokens": 32768, "repetition_penalty": 1.1}}
+TIER_DEFAULTS = {n: {"temperature": 0.6, "max_tokens": 32768, "repetition_penalty": 1.1} for n in SPLASH_TIERS}
 
 # ----------------------------------------------------------------------------- x-ultron-injected
 # Response header naming every gateway stage that wrote or replaced reply text (2026-10-07):
@@ -1861,6 +1936,24 @@ def trace_on() -> bool:
         return open(TRACE_MODE_FILE).read().strip().lower() == "on"
     except OSError:
         return False
+
+
+TRACE_TEXT_MIN_CHARS = int(os.environ.get("ULTRON_TRACE_TEXT_MIN_CHARS", "40000"))
+TRACE_TEXT_MIN_MSGS = int(os.environ.get("ULTRON_TRACE_TEXT_MIN_MSGS", "6"))
+
+
+def trace_wanted(messages: Any, tools: Any) -> bool:
+    """Tool-carrying requests, plus long ones with no tools array (6+ messages, or 40k+ characters): a harness
+    can describe its tools in the prompt and parse a JSON action from the reply, so a tools-only gate captures
+    nothing from it. Those traces have "tools": null."""
+    if tools:
+        return True
+    if not isinstance(messages, list):
+        return False
+    if len(messages) >= TRACE_TEXT_MIN_MSGS:
+        return True
+    # a harness can pack the whole history into one big user message
+    return sum(len(_text(m.get("content"))) for m in messages if isinstance(m, dict)) >= TRACE_TEXT_MIN_CHARS
 
 
 def _fallback_key(messages: list[Any], tier: str) -> str:

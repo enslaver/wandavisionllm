@@ -1,13 +1,11 @@
 #!/bin/zsh
-# tier-fable-tensorfold.sh <port> — the "fable" tier: a dense 27B for the hardest problems, thinking on. Started and stopped
+# tier-opus-tensorfold.sh <port> — ALTERNATE "opus" tier: a dense 27B for hard problems, thinking on. Started and stopped
 # by llama-swap (~/.llama-swap/config.yaml, built from tiers.conf). Swap the model: change MODEL below.
-# It doesn't share the Mac with opus (tiers.conf resident: loading one unloads the other). Optional: on
-# smaller Macs drop the [fable] section from tiers.conf.
 #
-# ROLLBACK COPY: the fable tier ran on this until it moved to Splash (tier-fable.sh). To roll back:
-#   cp ~/.mtplx/bin/tier-fable-tensorfold.sh ~/.mtplx/bin/tier-fable.sh, then unload fable (applies on next
-#   load). TensorFold takes thinking_budget, not reasoning_effort, so also drop reasoning_content and
-#   reasoning_effort from [fable] in tiers.conf and point its llama-swap health check back at /health.
+# ROLLBACK COPY: the big tier ran on this before it moved to Splash (tier-opus.sh). To use it:
+#   cp ~/.mtplx/bin/tier-opus-tensorfold.sh ~/.mtplx/bin/tier-opus.sh, then unload opus (applies on next
+#   load). TensorFold takes thinking_budget, not reasoning_effort, so also set reasoning_effort = no in [opus]
+#   (reasoning_content stays yes) and point check_endpoint back at /health.
 #
 # Runtime: TensorFold (github.com/ashhart/TensorFold, venv at ~/.tensorfold/venv). Its MLX lane kernels and
 # DFlash2 draft trees decode a 27B about twice as fast as plain MTP; output is byte-identical to serial decoding.
@@ -24,9 +22,9 @@
 # TensorFold's output (startup lines, one `done req-…` line per request with prompt/cached/ttft) also goes,
 # timestamped, to ~/.tensorfold/<tier>.log, minus /health and snapshot polls; llama-swap only keeps a small
 # ring buffer.
-PORT=${1:?usage: tier-fable-tensorfold.sh <port> [extra tensorfold serve flags]}; shift
+PORT=${1:?usage: tier-opus-tensorfold.sh <port> [extra tensorfold serve flags]}; shift
 EXTRA=("$@")        # benchmarking / one-off overrides; llama-swap passes none
-TIER=${TIER:-fable}  # llama-swap sets TIER from tiers.conf
+TIER=${TIER:-opus}  # llama-swap sets TIER from tiers.conf
 MODEL="Vontra/Qwen3.8-27B-MLX-4bit"   # Hugging Face id; TensorFold reads the Hugging Face cache
 DRAFTER="z-lab/Qwen3.8-27B-DFlash2"   # what TensorFold's --drafter auto picks for this family; it never downloads it
 TF="$HOME/.tensorfold/venv"

@@ -6,8 +6,9 @@ datasets hold tool output (file contents, command output), so they never go in a
 below runs on the Mac that serves the tiers, except image training for haiku, which runs on a separate
 PC with an NVIDIA GPU (the GPU box).
 
-Set up for the **sonnet** (Qwen3.5-9B), **opus** (Qwen3.6-35B-A3B) and **haiku** (Qwen3.5-4B) example
-tiers, all MTPLX packs. Text rounds train on the Mac with mlx_lm for any of the three. Haiku can also
+Set up for the **sonnet** (Swift 1.5 Qwen3.8-27B, a Splash GGUF; the Qwen3.5-9B MTPLX pack is its alternate),
+**opus** (Qwen3.8-27B on Splash; Qwen3.6-35B-A3B MTPLX is its alternate, `opus.yaml`) and **haiku**
+(Qwen3.5-4B MTPLX) example tiers. Text rounds train on the Mac with mlx_lm for any of the three. Haiku can also
 learn from images: Unsloth trains that LoRA on the GPU box, and the Mac forges and serves the result
 ([The haiku tier](#the-haiku-tier-text-and-images)). Other Qwen3.5/3.6 sizes should work the same;
 other model families need changes to `chunked_delta.py`.
@@ -147,7 +148,7 @@ About 15 minutes, plus live use.
      ~/lora/runs/v1-ck50 ~/lora/packs/v1-ck50 --bf16 <bf16 snapshot dir>
    ```
    Its last line should say `bf16 alone reproduces the pack: 1.0000`.
-2. In `mtplx/bin/tier-sonnet.sh`, set `MODEL="$HOME/lora/packs/v1-ck50"`.
+2. In `mtplx/bin/tier-sonnet-mtplx.sh` (the mtplx alternate: the Splash sonnet takes no pack), set `MODEL="$HOME/lora/packs/v1-ck50"`.
 3. Deploy: `./deploy.py push mtplx`
 4. Reload the tier: Wanda → sonnet card → Unload. The next request loads the new pack.
 5. Validate: `cd litellm && uvx --with pyyaml python3 suite.py baseline --tool`, then use it on a real
@@ -157,6 +158,22 @@ About 15 minutes, plus live use.
 **Roll back:** restore the old `MODEL=` line, `./deploy.py push mtplx`, unload the tier in Wanda.
 
 Opus and haiku are the same with their own pack, run and bf16 checkpoint; a fused opus pack is ~20 GB.
+
+## Sonnet on Swift
+
+`sonnet.yaml` targets the example sonnet tier's model, Swift 1.5 Qwen3.8-27B (the Qwen3.5-9B config is
+`sonnet-qwen35-9b.yaml`, for the mtplx alternate `tier-sonnet-mtplx.sh`). Set up, not yet run:
+
+1. `./prep_swift_base.sh`: downloads `ukisai/Swift-1.5-Qwen3.8-27b` (BF16, 55 GB) and writes a 4-bit MLX
+   base to `~/lora/base/sonnet-swift-1.5-27b-4bit` (~15 GB). It needs an `mlx_lm` that loads the `qwen3_5`
+   checkpoint's language model.
+2. `TIER=sonnet lora/run.sh <name>`: samples from llama-swap's `sonnet`, keeps the tool-call points, and trains
+   rank 16 on the top 24 blocks. Unload opus first: the base alone is ~15 GB beside haiku.
+3. **Getting an adapter back into the tier is not solved.** The tier serves `IQ3_XXS-mtp`, a GGUF built
+   with the vendor's GSQ-RCO recipe and an MTP head, and `splash serve` has no adapter flag. Options: fuse the
+   adapter into the 4-bit MLX base and serve that through Splash (~15 GB resident against the GGUF's 10.4, and
+   no MTP head speed-up), or requantize the fused BF16 to GGUF with llama.cpp (which loses the GSQ quality).
+   Decide after a first adapter beats the base on held-out points (`eval.py`).
 
 ## One-time setup
 
@@ -175,7 +192,8 @@ If a tier's model changes, the base view and the bf16 checkpoint must match the 
 adapters don't carry over.
 
 Other tiers: **haiku** trains text like sonnet; for images see [The haiku tier](#the-haiku-tier-text-and-images).
-**fable** runs on TensorFold, not an MTPLX pack, so `fuse_pack.py` doesn't apply.
+**fable** is cloud only (`local = no`), so there is nothing to train. **opus** and **sonnet** run on
+Splash, not as MTPLX packs, so `fuse_pack.py` doesn't apply to them (see [Sonnet on Swift](#sonnet-on-swift)).
 
 ## The haiku tier (text and images)
 

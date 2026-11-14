@@ -36,6 +36,7 @@ Template: [`litellm/env.example`](../litellm/env.example).
 | `ULTRON_PRESSURE_TRIP` | kernel pressure level that trips the memory guard: 4 = critical (default), 2 = warn |
 | `ULTRON_CHAT_BRIDGE` | `on` (default): `/v1/messages` to the cloud endpoint go through LiteLLM's chat-completions bridge; `off`: LiteLLM's `/v1/responses` bridge |
 | `ULTRON_MEM_WAIT_S` | memory gate: how long a local-only request waits for other tiers to finish (300; 0 = off) |
+| `FIRECRAWL_API_KEY`, `CONTEXT7_API_KEY` | optional keys for the `search/` service (`POST /ultron/search`); re-read per request, empty = lower rate limit |
 | `ULTRON_HINDSIGHT_URL`, `ULTRON_HINDSIGHT_BANK` | Hindsight memory server and bank (empty URL = the hook does nothing) |
 | `ULTRON_HEADROOM_MODEL_LIMIT` | largest tier input cap, for Headroom compression (200000) |
 | `ULTRON_COMFY_URL`, `ULTRON_COMFY_WORKFLOWS` | media hook tries this ComfyUI first for image generation/edit (empty = off); workflow folder (`~/.ultron/comfy`) |
@@ -75,7 +76,7 @@ Every response carries `x-ultron-route` with the decision and its reason.
 
 | Requested model | Tier |
 |---|---|
-| `ultron/fable`, `claude-fable-*`, `fable` | fable |
+| `ultron/fable`, `claude-fable-*`, `fable` | fable (cloud only: `local = no`, answered by its `cloud` model) |
 | `ultron/opus`, `claude-opus-*`, `opus` | opus |
 | `ultron/sonnet`, `claude-sonnet-*`, `claude-*` (anything else Claude), `sonnet` | sonnet |
 | `ultron/haiku`, `claude-haiku-*`, `haiku` | haiku |
@@ -112,7 +113,7 @@ Tier names never change, so clients and LiteLLM don't either.
 - **A helper model that isn't a tier** (like the image judge): the same, plus `routed = no` in its
   section. Clients reach it only as `ultron/<name>`; it never takes a conversation, has no cloud
   overflow, and any tier may unload it. Give it a slot in `resident` the way `[judge]` shares the big
-  tier's: `(fable | opus | judge) & sonnet & haiku`.
+  tier's: `(opus | judge) & sonnet & haiku`.
 
 ## Running without a cloud provider
 

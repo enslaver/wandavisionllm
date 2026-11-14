@@ -71,7 +71,7 @@ def check_yaml(out, deploy):
     tiers = deploy.TIERS
     cfg = yaml.safe_load(open(os.path.join(out, "litellm", "config.yaml")))
     names = [m.get("model_name") for m in cfg.get("model_list") or []]
-    for need in [f"ultron/{n}" for n in tiers.names] + [f"cloud/{n}" for n in tiers.names if tiers.tier[n]["cloud"]]:
+    for need in [f"ultron/{n}" for n in tiers.names] + [f"cloud/{n}" for n in tiers.local_names() if tiers.tier[n]["cloud"]]:
         if need not in names:
             fail(f"litellm/config.yaml: model_name {need} missing")
     callbacks = (cfg.get("litellm_settings") or {}).get("callbacks") or []
@@ -83,8 +83,13 @@ def check_yaml(out, deploy):
         fail("litellm/config.yaml: master_key must come from os.environ/LITELLM_MASTER_KEY")
     swap = yaml.safe_load(open(os.path.join(out, "llama-swap", "config.yaml")))
     swap_tiers = list((swap.get("models") or {}).keys())
-    if swap_tiers != tiers.names:
-        fail(f"llama-swap/config.yaml: tiers are {swap_tiers}, tiers.conf has {tiers.names}")
+    if swap_tiers != tiers.local_names():
+        fail(f"llama-swap/config.yaml: tiers are {swap_tiers}, tiers.conf has {tiers.local_names()} (cloud-only tiers excluded)")
+    by_name = {m.get("model_name"): m for m in cfg.get("model_list") or []}
+    for n in tiers.cloud_only():
+        p = (by_name.get(f"ultron/{n}") or {}).get("litellm_params") or {}
+        if str(p.get("model", "")).startswith("hosted_vllm/") or p.get("api_base") != "os.environ/OMNIROUTE_BASE":
+            fail(f"litellm/config.yaml: ultron/{n} is cloud only (local = no) but is not answered by its cloud model")
     for t, m in (swap.get("models") or {}).items():
         if not str(m.get("cmd", "")).startswith("/"):
             fail(f"llama-swap/config.yaml: {t}.cmd must be an absolute path after render")
@@ -125,6 +130,7 @@ DEPLOYED_PY = {
     "litellm/ultron_hindsight.py": {"litellm", "ultron_admit"},
     "litellm/ultron_headroom.py": {"litellm", "headroom", "ultron_admit"},
     "litellm/ultron_tiers.py": set(),
+    "search/server.py": set(),
     "gpu-box/deploy.py": set(),        # deployed on the GPU box
     "Vision/judge/rank.py": set(),     # a client; runs anywhere
 }

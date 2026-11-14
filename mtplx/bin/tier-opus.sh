@@ -1,44 +1,57 @@
 #!/bin/zsh
-# tier-opus.sh <port> — the "opus" tier: a big MoE coder, thinking on, long context. Started and stopped by
-# llama-swap (~/.llama-swap/config.yaml, built from tiers.conf). Swap the model: change MODEL below.
+# tier-opus.sh <port> — the "opus" tier: a dense 27B for the hardest problems, thinking on, no vision. Started and
+# stopped by llama-swap (~/.llama-swap/config.yaml, built from tiers.conf; ready check /ready). Swap the model: change
+# MODEL below. (The "fable" tier is cloud only: tiers.conf gives it `local = no`.) Alternates: tier-opus-qwen36.sh
+# (Qwen3.6-35B-A3B MoE on mtplx), tier-opus-tensorfold.sh (the same 27B on TensorFold).
 #
-# Runtime: mtplx (native MTP speculative decoding). Model: Qwen3.6-35B-A3B as an MTPLX Optimized-Speed pack,
-# ~21 GB, 262k context. MoE: 35B weights, 3B active per token, so it decodes like a small model. Hybrid
-# attention: 10 of 40 layers are full attention with 2 KV heads, so the KV cache is ~20 KiB/token (256k is
-# about 5 GiB) and it stays resident beside sonnet + haiku on 64 GB. Native tool calling.
-# Get it before the first request (llama-swap's health check would time out on a download):
-#   uvx --from huggingface_hub hf download Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed \
-#     --local-dir ~/.mtplx/models/Youssofal--Qwen3.6-35B-A3B-MTPLX-Optimized-Speed
+# Runtime: Splash (github.com/incoai/splash, `brew install incoai/tap/splash`, 1.3.2). Model: Qwen3.8-27B, MLX
+# 4-bit, with DFlash2 speculative decoding (Splash picks the family's draft model itself). The tier ran on
+# TensorFold first; that script is tier-opus-tensorfold.sh (rollback steps in its header).
+# What differs from TensorFold:
+#  - reasoning_effort is read per request (it reaches the chat template as enable_thinking + reasoning_effort);
+#    there is no thinking_budget. --default-reasoning-effort medium = TensorFold's --reasoning-effort medium.
+#  - reasoning_content in assistant history is read back (LiteLLM keeps it for this tier: tiers.conf
+#    reasoning_content = yes).
+#  - no server-side sampling defaults: temperature defaults to 1.0 (TensorFold ran 0.6), so the LiteLLM
+#    admission hook sends temperature 0.6 and max_tokens 32768 when a request sets none. top_p 0.95 / top_k 20
+#    are Splash's own defaults.
+#  - /health is 200 as soon as the server answers, /ready only once the engine is up: llama-swap checks /ready.
+#  - own status/metrics: GET /status, /metrics (Prometheus); the prefix cache can live on SSD across restarts.
 #
-# tiers.conf for this tier: vision = no (this pack is text only; a pack with a vision tower can say yes),
-# think_in_content = yes (the Qwen3.6 template reads earlier reasoning back from a <think> block),
-# chat_only = yes (mtplx rejects images and reasoning items on /v1/responses).
-# Sampling = Qwen model card "thinking, precise coding": temp 0.6 top_p 0.95 top_k 20.
-PORT=${1:?usage: tier-opus.sh <port> [extra mtplx serve flags]}; shift
-EXTRA=("$@")        # benchmarking / one-off overrides; llama-swap passes none
+# tiers.conf for this tier: vision = no, chat_only = yes, reasoning_content = yes, reasoning_effort = yes.
+# Splash has no /v1/mtplx/snapshot, so Wanda and the admission hook count this tier's work from LiteLLM's
+# in-flight list.
+# Pin the model with --revision <commit> once you have it cached: no Hub lookups, no surprise model change when
+# the repo moves.
+PORT=${1:?usage: tier-opus.sh <port> [extra splash serve flags]}; shift
+EXTRA=("$@")         # benchmarking / one-off overrides; llama-swap passes none
 TIER=${TIER:-opus}  # llama-swap sets TIER from tiers.conf
-MODEL="Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed"   # mtplx resolves Hugging Face ids from ~/.mtplx/models
+MODEL="mlx-community/Qwen3.8-27B-4bit"   # Hugging Face id; Splash reads the Hugging Face cache
+SPLASH=${SPLASH:-/opt/homebrew/bin/splash}
+LOG="$HOME/.splash/$TIER.log"
 
-# Session-bank RAM cap. Each mtplx process otherwise plans for most of the Mac's memory, and the tiers would swap.
-export MTPLX_SESSION_BANK_MAX_BYTES=4G   # was 6G: the three banks together (opus + sonnet + haiku) were more than a 64 GB Mac has beside the weights, other software and mtplx's ~6 GB shed floor; opus entries stay under ~2.6 GB, and evicted sessions come back from the SSD tier in under a second
-export MTPLX_SESSION_BANK_IDLE_TTL_S=3600   # mtplx's default; 300 made a conversation that spent a few minutes on the cloud overflow come back to an expired session and prefill cold. The cap above still bounds the bank
-# In-reply loop guard OFF. It is DRY-style steering: once a 12-token run repeats 4 times, the token continuing
-# any earlier 12+ token verbatim run loses 3-16 raw logits. Opus writes long structured plans (YAML keys, ids
-# repeated verbatim), so the guard fired on ~18% of requests and corrupted output: mid-token newlines ("prom\npt"),
-# dropped characters ("153-" for "1453-"). Runaway replies still reached max_tokens with it on. Sonnet and haiku
-# keep it (it fired on <0.3% of their requests).
-export MTPLX_LOOP_GUARD=0
+mkdir -p "$HOME/.splash"
+[[ -f $LOG ]] && (( $(stat -f %z "$LOG") > 50000000 )) && mv -f "$LOG" "$LOG.1"
+zmodload zsh/datetime
+exec > >(
+  exec 3>>"$LOG"
+  while IFS= read -r line; do
+    print -r -- "$line"                          # llama-swap still gets every line (/logs/stream/upstream)
+    [[ $line == *'GET /v1/mtplx/snapshot'* ]] && continue   # Wanda's per-second poll, a 404 Error line each
+    strftime -s ts '%F %T' $EPOCHSECONDS
+    print -r -u3 -- "$ts $line"
+  done
+) 2>&1
 
-# mtplx_effort.py = mtplx plus per-request reasoning_effort -> thinking budget (tiers.conf: effort = yes); same CLI.
-# Roll back: exec "$HOME/.mtplx/bin/mtplx" serve ... (same flags)
-export PYTHONPYCACHEPREFIX="$HOME/Library/Caches/MTPLX/PythonBytecode"   # as ~/.mtplx/bin/mtplx sets it
-exec "$HOME/Library/Application Support/MTPLX/runtime-venv/bin/python" "$HOME/.mtplx/bin/mtplx_effort.py" serve \
-  --host 127.0.0.1 --port "$PORT" \
-  --no-auth `# loopback only, behind llama-swap; the network-facing auth is LiteLLM's master key` \
-  --model "$MODEL" --model-id "$TIER" \
-  --profile sustained `# the pack's recommended profile; MTP depth comes from its mtplx_runtime.json. A/B on the reference Mac: mtplx's turbo profile (4-bit verify matmuls, validated but not bit-exact) was no consistent win over sustained, so stay on sustained` \
-  --tool-prompt-mode native `# the model's own trained tool format (qwen3_coder XML)` \
-  --reasoning auto --preserve-thinking auto `# thinking on; the Qwen3.6 template keeps it across turns` \
-  --default-temperature 0.6 --default-top-p 0.95 --default-top-k 20 \
-  --ssd-session-cache on \
-  --yes "${EXTRA[@]}"
+exec "$SPLASH" serve \
+  --model "$MODEL" \
+  --language-only `# the checkpoint has no vision tower; images reroute to the vision tier in ultron_admit` \
+  --host 127.0.0.1 --port "$PORT" --no-webui `# loopback only, behind llama-swap` \
+  --served-model-name "$TIER" `# the id llama-swap forwards` \
+  --default-reasoning-effort medium `# medium adds no system text, so system-block snapshots match (as TensorFold)` \
+  --thinking-token-budget 16384 `# cap on thinking; a request's thinking_token_budget overrides it` \
+  --thinking-end-text $'I have thought about this long enough; the answer follows.\n</think>' `# turns the model toward its answer when the budget runs out (<=64 tokens)` \
+  --idle-release off `# llama-swap owns the lifecycle (ttl 600); Splash would unwire the weights after 10 min itself` \
+  --max-memory 34G `# Metal budget: ~18.6 GB fixed + KV at 32 KiB/token (256K = 8.5 GB); lower it on a smaller Mac, since sonnet and haiku share the box` \
+  --max-cache-disk 48G --persistent-cache `# prompts survive llama-swap unloads and restarts (~/Library/Caches/Splash)` \
+  "${EXTRA[@]}"

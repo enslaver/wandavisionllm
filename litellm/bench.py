@@ -144,6 +144,8 @@ def parse_calls(r):
             args = None
         if not isinstance(args, dict):
             args = None  # valid JSON of the wrong shape counts as a failed call, not a grader crash
+        if not isinstance(args, dict):
+            args = None  # valid JSON of the wrong shape counts as a failed call, not a grader crash
         out.append((fn.get("name"), args))
     return out
 

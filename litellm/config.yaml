@@ -60,7 +60,15 @@ general_settings:
   # ultron_admit fills in "model" (ULTRON_DECISIONS_MODEL) when the body has none; ultron_stats logs
   # it as cloud/decisions. Billed per call by that service. Uncomment and set DECISIONS_API_KEY in
   # ~/.litellm/env to use it.
-  # pass_through_endpoints:
+  # POST /ultron/search: web (Firecrawl) + docs (Context7) search, served by search/server.py on
+  # 127.0.0.1:8792 once `./deploy.py push search` has installed it (a 502 until then). Not /search:
+  # LiteLLM has its own /search route (it needs a search_tool_name) that would win.
+  pass_through_endpoints:
+    - path: "/ultron/search"
+      target: "http://127.0.0.1:8792/search"
+      auth: true
+      methods: ["POST"]
+      timeout: 120
   #   - path: "/decide/v1/systemone"
   #     target: "https://decisions-api.dev/v1/systemone"
   #     headers:

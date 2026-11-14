@@ -36,18 +36,18 @@ The example tier scripts in `mtplx/bin/`:
 
 | Tier | Model | Runtime | Weights | Cache cap | Context | Vision |
 |---|---|---|---|---|---|---|
-| fable | Qwen3.8-27B, MLX 4-bit (`mlx-community/Qwen3.8-27B-4bit`) | Splash (DFlash2 draft trees) | ~16 GB + draft | `--max-memory 34G`: ~18.6 GB fixed + KV at 32 KiB/token (256k ≈ 8.5 GB) | 200k input (262k window) | no |
-| opus | Qwen3.6-35B-A3B MoE, MTPLX Optimized-Speed (`Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed`) | mtplx (MTP) | ~21 GB | 4 GB session bank | 256k | no |
-| sonnet | Qwen3.5-9B, MTPLX Optimized-Speed (`Youssofal/Qwen3.5-9B-MTPLX-Optimized-Speed`) | mtplx (MTP) | ~8.7 GB | 4 GB session bank | 262k | yes |
+| fable | none: cloud only (`local = no`, answered by its `cloud` model) | — | — | — | — | — |
+| opus | Qwen3.8-27B, MLX 4-bit (`mlx-community/Qwen3.8-27B-4bit`) | Splash (DFlash2 draft trees) | ~16 GB + draft | `--max-memory 34G`: ~18.6 GB fixed + KV at 32 KiB/token (256k ≈ 8.5 GB) | 200k input (262k window) | no |
+| sonnet | Swift 1.5 Qwen3.8-27B, IQ3_XXS GGUF with MTP head (`ukisai/Swift-1.5-Qwen3.8-27B-GSQ-RCO-GGUF`) | Splash | ~10.4 GB | `--max-memory 16G`: ~11 GB weights + KV at 32 KiB/token | 110k input (about 128K fits) | no |
 | haiku | Qwen3.5-4B, MTPLX Optimized-Speed (`Youssofal/Qwen3.5-4B-MTPLX-Optimized-Speed`) | mtplx (MTP) | ~2.6 GB | 3 GB session bank | 262k | no |
 
-On 64 GB, either big tier fits resident with sonnet and haiku (~30 or ~32 GB, plus ~15 + ~8 GB, with
-every cache at its cap; less in practice), but not both: `resident = (fable | opus) & sonnet & haiku`,
-so loading one unloads the other. Opus is a MoE with 3B active parameters and a small KV cache (~20
-KiB/token, ~5 GiB at 256k). Fable still wants the machine to itself past ~128k tokens of context.
-Measured on the reference Mac with a 4-bit Qwen3.8-27B checkpoint on TensorFold (fable ran there before Splash; Splash's KV is about half the size, 32 KiB/token against 64 KiB/token, so the same context takes less memory):
+On 64 GB, opus fits resident with sonnet and haiku (~34 GB + ~16 GB + ~8 GB at the caps; less in practice):
+`resident = (opus | judge) & sonnet & haiku`. Opus still wants the machine to itself past ~128k tokens of
+context. Measured on the reference Mac with a 4-bit Qwen3.8-27B checkpoint on TensorFold (opus's model ran
+there before Splash; Splash's KV is about half the size, 32 KiB/token against 64 KiB/token, so the same
+context takes less memory):
 
-| Fable context | Decode | Peak memory |
+| Opus context | Decode | Peak memory |
 |---|---|---|
 | 128k | 41 tok/s | 47 GB |
 | 200k | 28 tok/s | 52 GB |
@@ -57,12 +57,12 @@ The memory guard in `ultron_admit` sends new conversations to the cloud before t
 
 ## Measured speed
 
-The 27B (fable tier), 4-bit, same client, thinking off, temperature 0.6, median of 3 runs (tok/s):
+The 27B (opus tier), 4-bit, same client, thinking off, temperature 0.6, median of 3 runs (tok/s):
 
 | Runtime | code | html | prose | file edit |
 |---|---|---|---|---|
 | mtplx, mixed-precision MTPLX pack, MTP depth 3 | 67.7 | 67.5 | 40.7 | 178.7 |
-| **TensorFold, uniform 4-bit (the fable script)** | **153.5** | **142.2** | **67.0** | **494.6** |
+| **TensorFold, uniform 4-bit (`tier-opus-tensorfold.sh`)** | **153.5** | **142.2** | **67.0** | **494.6** |
 
 TensorFold's output is byte-identical to serial decoding; its speedup comes from draft trees. Haiku
 (mtplx, MTP, the Qwen3.5-4B pack above) runs ~226 tok/s end to end on a 2k-token code answer, with
@@ -79,27 +79,30 @@ parentheses group. When a request would need a load that doesn't fit the line, t
 (`ultron_admit`) sends a new conversation to cloud overflow instead of making llama-swap swap (route
 mode `local-only` swaps instead).
 
-| Unified memory | fable | opus | sonnet | haiku | `resident =` |
+| Unified memory | opus | sonnet | haiku | `resident =` |
 |---|---|---|---|---|---|
-| 16–24 GB | — | Qwen3.5-9B MTPLX (~8.7 GB) | Qwen3.5-4B MTPLX (~2.6 GB) | Qwen3.5-2B GGUF on llama-server (`unsloth/Qwen3.5-2B-GGUF:Q4_K_M`, ~1.3 GB) | `opus \| (sonnet & haiku)` |
-| 32 GB | — | Qwen3.5-9B MTPLX (~8.7 GB) | Qwen3.5-4B MTPLX (~2.6 GB) | Qwen3.5-2B GGUF on llama-server (~1.3 GB) | `opus & sonnet & haiku` |
-| 48 GB | — | Qwen3.6-35B-A3B MTPLX (~21 GB) | Qwen3.5-9B MTPLX (~8.7 GB) | Qwen3.5-4B MTPLX (~2.6 GB) | `(opus \| sonnet) & haiku` |
-| 64 GB | Qwen3.8-27B 4-bit on Splash (~16 GB + draft) | Qwen3.6-35B-A3B MTPLX | Qwen3.5-9B MTPLX | Qwen3.5-4B MTPLX | `(fable \| opus) & sonnet & haiku` |
-| 128 GB | Qwen3.8-27B 4-bit on Splash, full 200k input | Qwen3.6-35B-A3B MTPLX | Qwen3.5-9B MTPLX | Qwen3.5-4B MTPLX | `(fable \| opus) & sonnet & haiku` |
+| 16–24 GB | Qwen3.5-9B MTPLX (~8.7 GB) | Qwen3.5-4B MTPLX (~2.6 GB) | Qwen3.5-2B GGUF on llama-server (`unsloth/Qwen3.5-2B-GGUF:Q4_K_M`, ~1.3 GB) | `opus \| (sonnet & haiku)` |
+| 32 GB | Qwen3.5-9B MTPLX (~8.7 GB) | Qwen3.5-4B MTPLX (~2.6 GB) | Qwen3.5-2B GGUF on llama-server (~1.3 GB) | `opus & sonnet & haiku` |
+| 48 GB | Qwen3.6-35B-A3B MTPLX (~21 GB) | Qwen3.5-9B MTPLX (~8.7 GB) | Qwen3.5-4B MTPLX (~2.6 GB) | `(opus \| sonnet) & haiku` |
+| 64 GB | Qwen3.8-27B 4-bit on Splash (~16 GB + draft) | Swift 1.5 27B GGUF on Splash (~10.4 GB) | Qwen3.5-4B MTPLX | `(opus \| judge) & sonnet & haiku` |
+| 128 GB | Qwen3.8-27B 4-bit on Splash, full 200k input | Swift 1.5 27B GGUF on Splash | Qwen3.5-4B MTPLX | `(opus \| judge) & sonnet & haiku` |
 
-Below 64 GB, delete the `[fable]` and `[judge]` sections from `tiers.conf`. The example `[sonnet]`
+Fable is a cloud-only tier in every row (`local = no`): it takes no memory, so it never appears in
+`resident =`. Below 64 GB, delete the `[judge]` section from `tiers.conf` and give the smaller rows
+their own scripts (the 9B and 35B scripts are `tier-sonnet-mtplx.sh` and `tier-opus-qwen36.sh`: copy
+one over `tier-sonnet.sh` / `tier-opus.sh` and follow its header for the `tiers.conf` keys). The example `[sonnet]`
 loads on demand and unloads after 10 minutes unused (`ttl = 600`, `preload = no`); on 64 GB and up you
 can keep it and haiku loaded instead (`ttl = 0`, `preload = yes`), and the image judge (~5.7 GB, optional) takes the big tier's slot:
-`(fable | opus | judge) & sonnet & haiku`. Per row, beyond the models:
+`(opus | judge) & sonnet & haiku`. Per row, beyond the models:
 
 - **16–24 GB:** opus alone, or the two small tiers together. Session-bank caps 2–3 GB, context 64k–128k.
-  The 9B pack has a vision tower, so opus gets `vision = yes`. Send heavy work to the cloud.
-- **32 GB:** the same models, all resident (~13 GB of weights). Caps 3–4 GB each. The 27B's Metal budget (`--max-memory 34G` in `tier-fable.sh`) does not fit a 32 GB Mac next to the other tiers, so there is no fable tier here.
+  The 9B pack has a vision tower, so that tier gets `vision = yes`. Send heavy work to the cloud.
+- **32 GB:** the same models, all resident (~13 GB of weights). Caps 3–4 GB each. The 27B's Metal budget (`--max-memory 34G` in `tier-opus.sh`) does not fit a 32 GB Mac next to the other tiers, so the 35B-A3B or 9B packs stand in for opus here.
 - **48 GB:** opus and sonnet take turns next to an always-loaded haiku. In `tier-opus.sh` lower the
   session bank (`MTPLX_SESSION_BANK_MAX_BYTES=3G`) and the context (add `--context-window 131072`, and
   set `context` in `tiers.conf`).
 - **64 GB:** the example scripts as they are.
-- **128 GB:** raise fable's memory budget (`--max-memory` in `tier-fable.sh`, and `--max-cache-disk`) so long
+- **128 GB:** raise opus's memory budget (`--max-memory` in `tier-opus.sh`, and `--max-cache-disk`) so long
   conversations stay cached.
 
 Runtimes other than mtplx and Splash: `mtplx/bin/examples/` has llama-server and mlx_lm.server

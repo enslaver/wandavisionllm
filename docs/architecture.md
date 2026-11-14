@@ -6,9 +6,10 @@
 |---|---|---|---|
 | LiteLLM | `0.0.0.0:4000` | LaunchAgent `com.litellm.proxy` | the only network-facing API; Anthropic + OpenAI formats; master key; the hooks |
 | llama-swap | `127.0.0.1:8001` | LaunchAgent `com.llama-swap` | starts/stops tier servers; memory matrix; reloads its config on change |
-| tier servers | `127.0.0.1:18001+` | llama-swap, via `~/.mtplx/bin/tier-*.sh` | mtplx (opus, sonnet, haiku), Splash (fable) and mlx_vlm.server (the image judge); no auth, loopback only |
+| tier servers | `127.0.0.1:18001+` | llama-swap, via `~/.mtplx/bin/tier-*.sh` | mtplx (haiku), Splash (opus, sonnet) and mlx_vlm.server (the image judge); no auth, loopback only |
 | Wanda | `127.0.0.1:8790` | LaunchAgent `com.wanda.portal` | samples everything once a second; the panel |
 | Caddy | `:443`, `:80` | `brew services` | Wanda at `/`, LiteLLM at `/llm/`, media at `/media/`, your services |
+| search (optional) | `127.0.0.1:8792` | LaunchAgent `com.ultron.search` | web (Firecrawl) + docs (Context7) search, reached as `POST :4000/ultron/search` through a LiteLLM pass-through ([search/](../search/README.md)) |
 | OmniRoute | elsewhere | you | optional cloud overflow and media generation |
 | ComfyUI | the GPU box (optional) | `gpu-box/deploy.py` | local image/video generation for Open WebUI ([Vision](../Vision/README.md)) |
 
@@ -74,6 +75,7 @@ matrix) but knows nothing about conversations, agents or clouds. Each does one j
 | `~/.litellm/*.jsonl` | the hooks | loop-breaker, ultron-admit, ultron-stats, media, rescue logs |
 | `~/.ultron/*-mode` | Wanda / you | live switches |
 | `~/.ultron/media/` | ultron_media | generated images and videos |
+| `~/search/`, `~/.search/` | deploy / search | the optional search service and its log |
 | `~/.llama-swap/config.yaml` | deploy | tiers and matrix |
 | `~/.mtplx/bin/tier-*.sh` | deploy | tier launch scripts |
 | `~/wanda/`, `~/.wanda/token`, `~/.wanda/www/` | deploy / Wanda / you | the panel, its POST token, services + icons |

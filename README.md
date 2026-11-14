@@ -19,9 +19,8 @@ LiteLLM 0.0.0.0:4000 ── hooks: stats → loop breaker → media → admissio
         │                                                   │
         ▼                                                   ▼
 llama-swap 127.0.0.1:8001                         cloud/<tier> (OmniRoute, optional)
-  ├─ fable   Qwen3.8-27B       Splash       200k ctx, thinking (takes turns with opus)
-  ├─ opus    Qwen3.6-35B-A3B   mtplx (MTP)  256k ctx, thinking, MoE
-  ├─ sonnet  Qwen3.5-9B        mtplx (MTP)  262k ctx, vision, tools
+  ├─ opus    Qwen3.8-27B       Splash       200k ctx, thinking
+  ├─ sonnet  Swift 1.5 27B     Splash       110k ctx, thinking, tools (GGUF, MTP head)
   └─ haiku   Qwen3.5-4B        mtplx (MTP)  always loaded, helper (titles, media check) (titles, media check)
 
 Wanda 127.0.0.1:8790 ── the dashboard, behind Caddy on :443 / :80
@@ -60,10 +59,10 @@ The long version, with the numbers: [docs/why.md](docs/why.md).
 | OS | macOS 27.0 |
 | Optional | an OmniRoute instance anywhere on your network, for cloud overflow and media |
 
-Fable or opus (one at a time) sits in memory with sonnet and haiku (~32 + ~11 + ~8 GB with their
-caches) at moderate context. Fable still wants the machine to itself past ~128k tokens, where its KV
-cache grows to 47–52 GB.
-Measured fable speed (TensorFold, before the move to Splash; 4-bit, thinking off): ~150 tok/s on code, ~495 tok/s on file edits,
+Opus sits in memory with sonnet and haiku (~34 + ~16 + ~8 GB at their caps) at moderate context. Opus
+still wants the machine to itself past ~128k tokens, where its KV cache grows to 47–52 GB. Fable is a
+cloud-only tier (`local = no` in `tiers.conf`): it needs no memory here.
+Measured opus speed (TensorFold, before the move to Splash; 4-bit, thinking off): ~150 tok/s on code, ~495 tok/s on file edits,
 41 tok/s at 128k context. Haiku runs ~230 tok/s. Details, and how to size it for a smaller or larger
 Mac: [docs/hardware.md](docs/hardware.md).
 

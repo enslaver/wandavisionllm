@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+
+### Added
+
+- Optional **`search/`** service: `POST /ultron/search` gives web search (Firecrawl) and library-docs search
+  (Context7) behind the LiteLLM key. Install with `./deploy.py push search`; keys in `~/.litellm/env`.
+- tiers.conf `local = no` makes a **cloud-only tier**: answered by its `cloud` model, never loaded, admitted or
+  locked. Wanda shows it as a cloud card.
+- The loop breaker catches a `tools: 0` harness repeating the same reply (warn at 4, force at 6, stop at 8).
+- A request asking for no thinking (`thinking: {type: disabled}`, `enable_thinking: false`) now really turns it
+  off on the local backends; a small client `max_tokens` caps thinking (`x-effort-clamp: off` opts out).
+- The trace tap, when on, also records long requests from harnesses that send no `tools` array.
+- Wanda "Idle unload" switch (off keeps loaded tiers warm); a `# wanda-model:` line in a tier script sets the
+  model name on its card.
+- `tier-opus-qwen36.sh` and `tier-sonnet-mtplx.sh`: the previous opus and sonnet models, kept as alternates.
+
+### Changed
+
+- Example tiers: opus is Qwen3.8-27B on Splash, sonnet is Swift 1.5 Qwen3.8-27B (IQ3_XXS GGUF) on Splash,
+  fable is cloud-only. `resident` is `(opus | judge) & sonnet & haiku`; no example tier sees images until you
+  add a vision tier. Live suite, docs and `lora/sonnet.yaml` (plus `prep_swift_base.sh`) follow.
+
+### Fixed
+
+- The benchmark no longer crashes on tool-call arguments that are valid JSON but not an object.
+
 ## [0.4.0] - 2026-10-16
 
 ### Added
@@ -170,7 +196,8 @@ First public release.
 - CI (tests on Python 3.9 and 3.12, ruff, shell syntax, config rendering and validation) and a
   tag-driven release workflow.
 
-[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/enslaver/wandavisionllm/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/enslaver/wandavisionllm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/enslaver/wandavisionllm/releases/tag/v0.1.0
