@@ -474,7 +474,7 @@ function renderCloudCards(omni){
       head.append(bulb,nm,pill);
       const model=el("div","model","→ OmniRoute combo for "+t);
       const stats=el("div","stats"), V={};
-      for(const n of ["Points to","Combo","Requests","OK","Avg","Last"]){ const [s2,v]=stat(n); V[n]=v; stats.appendChild(s2); }
+      for(const n of ["Points to","Combo","Requests","OK","Avg","Last"]){ const [s2,v]=stat(n); V[n]=v; if(n==="Points to") s2.style.gridColumn="span 2"; stats.appendChild(s2); }
       const note=el("div","cnote","no local model: requests for this tier go to the cloud overflow only");
       c.append(head,model,stats,note);
       $("tiers").prepend(c);

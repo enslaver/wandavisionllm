@@ -964,7 +964,12 @@ def host_name(ip):
 
 
 def _endpoint(r):
-    return r.get("endpoint") or (r["target"] if r.get("applied") else f"ultron/{r.get('tier')}")
+    ep = r.get("endpoint") or (r["target"] if r.get("applied") else f"ultron/{r.get('tier')}")
+    # A request the client sent straight to a cloud-only tier's name (claude-<tier>-*, ultron/<tier>, <tier>) is logged with the
+    # client's own model id as its endpoint; the traffic graphic only has nodes for cloud/<tier>, so draw it there.
+    if r.get("rule") == "explicit" and r.get("tier") in cloud_only_tiers() and not str(ep).startswith("cloud/"):
+        return f"cloud/{r['tier']}"
+    return ep
 
 
 def _agent(r):

@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-14
+
+### Fixed
+
+- Wanda: a cloud-only tier's card no longer cuts off the "Points to" model id (the field spans two columns).
+- Wanda: requests sent straight to a cloud-only tier (`claude-<tier>-*`, `ultron/<tier>`, `<tier>`) are drawn
+  on that tier's `cloud/<tier>` node in the traffic graphic instead of an unmatched endpoint.
+
 ## [0.5.0] - 2026-11-14
 
 ### Added
@@ -196,7 +204,8 @@ First public release.
 - CI (tests on Python 3.9 and 3.12, ruff, shell syntax, config rendering and validation) and a
   tag-driven release workflow.
 
-[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/enslaver/wandavisionllm/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/enslaver/wandavisionllm/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/enslaver/wandavisionllm/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/enslaver/wandavisionllm/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/enslaver/wandavisionllm/compare/v0.1.0...v0.2.0
